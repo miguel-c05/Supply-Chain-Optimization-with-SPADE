@@ -70,4 +70,4 @@ dependencies:
       - win32-setctime==1.2.0
       - winloop==0.1.8
       - yarl==1.20.1
-prefix: C:\Users\migue\miniconda3\envs\SistInt
+
