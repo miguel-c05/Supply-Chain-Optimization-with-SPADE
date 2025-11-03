@@ -7,10 +7,11 @@ from world.graph import Graph
 
 class World:
 
-    def __init__(self, width, height, mode="uniform", seed=None, gas_stations=0, warehouses=0, suppliers=0, stores=0):
-
+    def __init__(self, width=5, height=5, mode="uniform", seed=None, gas_stations=0, warehouses=0, suppliers=0, stores=0, highway=False, max_cost=10, tick=0):
+        
         self.width = width
         self.height = height
+        self.tick_counter = tick
         # Cria um grafo que representa uma matriz, onde cada nó está ligado aos seus vizinhos ortogonais
         self.graph = Graph.grid_2d_graph(width, height)
         
@@ -21,6 +22,7 @@ class World:
                 mapping[(j, i)] = i * width + j + 1
         self.graph.relabel_nodes(mapping)
 
+        self.max_cost = max_cost
         self.mode = mode
         assert self.mode in ["uniform", "different"], "Mode must be either 'uniform' or 'different'"
         self.seed = seed
@@ -34,10 +36,34 @@ class World:
         self._add_costs_to_edges()
         self._assign_facilities()
 
-        
+        if highway:
+            self._add_highway_edge()
 
+    def _add_highway_edge(self):
+        """Adiciona uma aresta de alta capacidade entre dois nós aleatórios com minimo de distancia manhattan de 5"""
+        nodes = list(self.graph.nodes.keys())
+        if len(nodes) < 2:
+            return  # Não há nós suficientes para adicionar uma aresta
 
-    def _generate_cost_matrix(self, max_cost=10):
+        while True:
+            u_id, v_id = random.sample(nodes, 2)
+            if self._manhattan_distance(u_id, v_id) >= self.width: 
+                # Obtém os objetos Node a partir dos IDs
+                u = self.graph.get_node(u_id)
+                v = self.graph.get_node(v_id)
+                self.graph.add_edge(u, v, weight=1)  # Aresta de alta capacidade com peso 1
+                break
+
+    def _manhattan_distance(self, node1_id, node2_id):
+        """Calcula a distância de Manhattan entre dois nós usando seus IDs"""
+        # Converte ID de volta para coordenadas (x, y)
+        x1 = (node1_id - 1) % self.width
+        y1 = (node1_id - 1) // self.width
+        x2 = (node2_id - 1) % self.width
+        y2 = (node2_id - 1) // self.width
+        return abs(x1 - x2) + abs(y1 - y2)
+
+    def _generate_cost_matrix(self):
         if self.seed is not None:
             random.seed(self.seed)
             seed_folder = cfg.SEED_DIR
@@ -58,25 +84,23 @@ class World:
         cost_matrix = [[0 for _ in range(self.width * self.height + 1)] for _ in range(self.width * self.height + 1)]
         
         if self.mode == "uniform":
-            uniform_cost = random.randint(1, max_cost)
+            uniform_cost = random.randint(1, self.max_cost)
             for edge in self.graph.edges:
                 u, v = edge.node1.id, edge.node2.id
                 cost_matrix[u][v] = uniform_cost
         else:
             for edge in self.graph.edges:
                 u, v = edge.node1.id, edge.node2.id
-                cost_matrix[u][v] = random.randint(1, max_cost)
+                cost_matrix[u][v] = random.randint(1, self.max_cost)
 
         np.save(os.path.join(cfg.SEED_DIR, f"{self.seed}.npy"), cost_matrix)
         return cost_matrix
     
-
     def _add_costs_to_edges(self):
         """Adiciona os custos da matriz como peso nas arestas"""
         for edge in self.graph.edges:
             u, v = edge.node1.id, edge.node2.id
             edge.weight = self.cost_matrix[u][v]
-
 
     def _assign_facilities(self):
         """Atribui facilities (warehouses, suppliers, stores, gas_stations) a nós aleatórios"""
@@ -94,37 +118,32 @@ class World:
         node_index = 0
         
         # Atribui warehouses
-        if self.warehouses > 0:
-            for _ in range(self.warehouses):
-                if node_index < len(available_nodes):
-                    node_id = available_nodes[node_index]
-                    self.graph.nodes[node_id].warehouse = True
-                    node_index += 1
-        
+        for _ in range(self.warehouses):
+            if node_index < len(available_nodes):
+                node_id = available_nodes[node_index]
+                self.graph.nodes[node_id].warehouse = True
+                node_index += 1
+    
         # Atribui suppliers
-        if self.suppliers > 0:
-            for _ in range(self.suppliers):
-                if node_index < len(available_nodes):
-                    node_id = available_nodes[node_index]
-                    self.graph.nodes[node_id].supplier = True
-                    node_index += 1
+        for _ in range(self.suppliers):
+            if node_index < len(available_nodes):
+                node_id = available_nodes[node_index]
+                self.graph.nodes[node_id].supplier = True
+                node_index += 1
         
         # Atribui stores
-        if self.stores > 0:
-            for _ in range(self.stores):
-                if node_index < len(available_nodes):
-                    node_id = available_nodes[node_index]
-                    self.graph.nodes[node_id].store = True
-                    node_index += 1
+        for _ in range(self.stores):
+            if node_index < len(available_nodes):
+                node_id = available_nodes[node_index]
+                self.graph.nodes[node_id].store = True
+                node_index += 1
         
         # Atribui gas_stations
-        if self.gas_stations > 0:
-            for _ in range(self.gas_stations):
-                if node_index < len(available_nodes):
-                    node_id = available_nodes[node_index]
-                    self.graph.nodes[node_id].gas_station = True
-                    node_index += 1
-
+        for _ in range(self.gas_stations):
+            if node_index < len(available_nodes):
+                node_id = available_nodes[node_index]
+                self.graph.nodes[node_id].gas_station = True
+                node_index += 1
 
     def plot_graph(self):
         """Plota o grafo com os custos nas arestas direcionadas"""
@@ -197,7 +216,28 @@ class World:
         
         plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
 
-        plt.title(f"Graph (Seed: {self.seed}, Mode: {self.mode})")
+        plt.title(f"Graph (Seed: {self.seed}, Mode: {self.mode}, Tick: {self.tick_counter})")
         plt.axis('off')
         plt.tight_layout()
         plt.show()
+
+    def traffic(self):
+        """Aumenta o custo de uma edge aleatória para simular tráfego"""
+        edge = random.choice(self.graph.edges)
+        u, v = edge.node1.id, edge.node2.id
+        increase = random.randint(1, 5)
+        self.cost_matrix[u][v] += increase
+        edge.weight = min(self.cost_matrix[u][v], self.max_cost)
+        print(f"Traffic added: Cost from Node {u} to Node {v} increased by {increase} to {edge.weight}")
+        
+
+    def tick(self, traffic_interval=5):
+        """Avança o estado do mundo em um tick (a implementar)"""
+
+        if self.tick_counter % traffic_interval == 0:
+            p = random.uniform(0, 1)
+            if p > 0.5:
+                self.traffic()
+
+        self.tick_counter += 1
+
