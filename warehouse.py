@@ -8,6 +8,31 @@ from spade.template import Template
 
 class Warehouse(Agent):
     
+    """
+    Class for the Warehouse Agent.
+    
+    Currently able to:
+        - Generate random starting stock (1 to 20 over products A, B and C)
+        - Permanently listen for buy requests (only one request may be taken at a time)
+        - Send "warehouse-accept" messages
+        - Receive "store-confirm" messages
+        - Update stock
+        - Put bought items aside (in self.pending_orders) while they are not transported
+        
+    Usage instructions:
+        - For Vehicles:
+            - All vehicles must be subscribed in all warehouses and vice-versa
+            - To get all all orders from a store_agent, get
+            warehouse_agent.pending_orders[store_agent.jid]
+    
+    What is missing (TODO):
+        - Buy materials from a Supplier Agent (placeholder setup) 
+        - Setup intelligent buying method
+        - Communicate with other Warehouses
+        - Communicate with Vehicles
+    """
+    
+    
     class ReceiveBuyRequest(CyclicBehaviour):
         async def run(self):
             agent : Warehouse = self.agent
@@ -25,15 +50,15 @@ class Warehouse(Agent):
                 request_id = int(request[0])
                 quant = int(request[1])
                 product = request[2]
-                print(f"Got a request from {msg.sender}: id={request_id} quant={quant} product={product}")
+                print(f"{self.agent.jid}> Got a request from {msg.sender}: id={request_id} quant={quant} product={product}")
                 
                 if (product in agent.stock.keys()) and agent.stock[product] >= quant:
                     accept_behav = agent.AcceptBuyRequest(msg)
                     agent.add_behaviour(accept_behav)
                     
                     # Aguardar o comportamento terminar
-                    print("AcceptBuyRequest finished, now waiting for confirmation...")
                     await accept_behav.join()
+                    print(f"{self.agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
                     
                     print("="*30)
                     print("Current stock:")
@@ -41,9 +66,9 @@ class Warehouse(Agent):
                         print(f"{product}: {amount}")
                     print("="*30)
                 else:
-                    print("Could not satisfy request.")
+                    print(f"{self.agent.jid}> Could not satisfy request.")
             else:
-                print("Did not get any buy requests in 60 seconds.")
+                print(f"{self.agent.jid}> Did not get any buy requests in 60 seconds.")
 
     class AcceptBuyRequest(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -57,7 +82,7 @@ class Warehouse(Agent):
         
         async def run(self):
             print(
-                f"Accepted a request from {self.sender}: "
+                f"{self.agent.jid}> Accepted a request from {self.sender}: "
                 f"id={self.request_id} "
                 f"quant={self.quant} "
                 f"product={self.product}"
@@ -79,23 +104,39 @@ class Warehouse(Agent):
             
             # Aguardar a confirmação ser recebida antes de terminar
             await confirm_behav.join()
-            print("ReceiveConfirmation finished, stock updated.")
+            print(f"{self.agent.jid}> ReceiveConfirmation finished, stock updated.")
             
     class ReceiveConfirmation(OneShotBehaviour):
         async def run(self):
-            print("Waiting for store confirmation...")
+            print(f"{self.agent.jid}> Waiting for store confirmation...")
             msg : Message = await self.receive(timeout=10)
             
             if msg != None:
+                self.agent : Warehouse
+                
                 # Message with body format "id quantity type"
                 request = msg.body.split(" ")
                 quantity = int(request[1])
                 product = request[2]
                 
+                # Update warehouse stock
                 self.agent.stock[product] -= quantity
-                print(f"Confirmation received! Stock updated: {product} -= {quantity}")
+                
+                # Put bought items aside (in self.pending_orders)
+                pending_orders = self.agent.pending_orders
+                jid = msg.sender
+                if jid not in pending_orders:
+                    pending_orders[jid] = {}
+                    pending_orders[jid][product] = quantity
+                elif product not in pending_orders[jid]:
+                    pending_orders[jid][product] = quantity
+                else:
+                    pending_orders[jid][product] += quantity
+                        
+                    
+                print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
             else:
-                print("Timeout: No confirmation received in 10 seconds")
+                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds")
                 
             
             
@@ -118,10 +159,24 @@ class Warehouse(Agent):
                       "B" : random.randint(0,20),
                       "C" : random.randint(0,20),}
         print("="*30)
-        print("Startup stock:")
+        print(f"Startup {self.jid} stock:")
         for product, amount in self.stock.items():
             print(f"{product}: {amount}")
         print("="*30)
+        
+        """
+        self.pending_orders has the following structure:
+        
+        dict(   jid :   dict(   product: quantity,
+                                product: quantity,
+                                ...),
+                jid :   dict(   product: quantity,
+                                product: quantity,
+                                ...),
+                ...
+            )
+        """
+        self.pending_orders = {}
         
         behav = self.ReceiveBuyRequest()
         template = Template()

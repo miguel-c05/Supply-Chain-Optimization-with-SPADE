@@ -7,7 +7,21 @@ from spade.message import Message
 from spade.template import Template
 
 class Store(Agent):
-
+    
+    """
+    Class for the Store Agent.
+    
+    Currently able to:
+        -
+        
+    Usage instructions:
+        - To buy x units of product Y, call self.BuyProduct(x,Y)
+        - Only ONE request must be sent at once. To make multiple requests await the
+        previous BuyProduct request
+    
+    What is missing (TODO):
+        - Implement repetition for missed requests (already stored in self.active_requests)
+    """
     
     class BuyProduct(OneShotBehaviour):
         def __init__(self, quantity : int, product : str):
@@ -26,7 +40,7 @@ class Store(Agent):
                 msg.set_metadata("performative", "store-buy")
                 msg.body = f"{agent.request_counter} {self.quantity} {self.product}"
                 
-                print(f"Sent request \"{msg.body}\" to {msg.to}")
+                print(f"{self.agent.jid}> Sent request \"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
             agent.request_counter += 1
@@ -35,8 +49,14 @@ class Store(Agent):
             template = Template()
             template.set_metadata("performative", "warehouse-accept")
             agent.add_behaviour(behav, template)
+            
+            await behav.join()
 
     class RecieveAcceptance(OneShotBehaviour):
+        def __init__(self, buy_msg : Message):
+            super().__init__()
+            self.buy_msg : Message = buy_msg
+            
         async def run(self):
             self.agent : Store
             
@@ -50,36 +70,48 @@ class Store(Agent):
                 product = rec[2]
                 
                 print(
-                    f"Recieved acceptance from {msg.sender}: "
+                    f"{self.agent.jid}> Recieved acceptance from {msg.sender}: "
                     f"id={rec_id} "
                     f"quant={quantity} "
                     f"product={product}"
                 )
                 
-                if product in self.agent.stock:
-                    self.agent.stock[product] += quantity
-                else:
-                    self.agent.stock[product] = quantity
                 
                 self.agent.active_requests.pop(rec_id, None)
                 
                 behav = self.agent.SendConfirmation(msg)
                 self.agent.add_behaviour(behav)
+                
+                await behav.join()
+            
+            else:
+                print(f"{self.agent.jid}> No acceptance gotten. Request\"{self.buy_msg}\""
+                      f"saved in self.active_requests[{self.buy_msg.split(" ")[0]}]")
     
     class SendConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
             self.dest = msg.sender
             self.confirmation = msg.body
+            self.quantity = self.confirmation.split(" ")[1]
+            self.product = self.confirmation.split(" ")[2]
+            
         
         async def run(self):
+            agent : Store = self.agent
+            
+            if self.product in self.agent.stock:
+                agent.stock[self.product] += self.quantity
+            else:
+                agent.stock[self.product] = self.quantity           
+            
             msg = Message(to=self.dest)
             msg.set_metadata("performative", "store-confirm")
             msg.body = self.confirmation
             
             await self.send(msg)
             
-            print(f"Confirmation sent to {self.dest} for request: {msg.body}")
+            print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
     
     
     async def setup(self):
