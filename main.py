@@ -1,7 +1,7 @@
 from world.world import World
 
 w = World(
-    mode="uniform", 
+    mode="different", 
     max_cost=5, 
     seed=None, 
     gas_stations=0, 
@@ -12,7 +12,7 @@ w = World(
     traffic_probability=0.4,
     traffic_spread_probability=0.75,
     traffic_interval=3,
-    untraffic_probability=0.4,
+    untraffic_probability=0.4
 )
 
 for i in range(1, 11):

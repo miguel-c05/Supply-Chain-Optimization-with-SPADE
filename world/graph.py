@@ -20,15 +20,16 @@ class Node:
 
 
 class Edge:
-    def __init__(self, node1, node2, weight=None):
+    def __init__(self, node1, node2, weight=None, distance=None):
         self.node1 = node1
         self.node2 = node2
         self.weight = weight
         self.initial_weight = weight
+        self.distance = distance
     
     def __repr__(self):
-        return f"Edge({self.node1.id} -> {self.node2.id}, weight={self.weight})"
-    
+        return f"Edge({self.node1.id} -> {self.node2.id}, weight={self.weight}, distance={self.distance})"
+
     def get_other_node(self, node):
         return self.node2 if node == self.node1 else self.node1
 
@@ -42,13 +43,13 @@ class Graph:
     def add_node(self, node):
         self.nodes[node.id] = node
     
-    def add_edge(self, node1, node2, weight=None):
+    def add_edge(self, node1, node2, weight=None, distance=None):
         # Cria aresta de node1 para node2
-        edge1 = Edge(node1, node2, weight)
+        edge1 = Edge(node1, node2, weight, distance)
         self.edges.append(edge1)
         
         # Cria aresta de node2 para node1 (direção oposta)
-        edge2 = Edge(node2, node1, weight)
+        edge2 = Edge(node2, node1, weight, distance)
         self.edges.append(edge2)
         
         # Adiciona vizinhos bidireccionalmente
