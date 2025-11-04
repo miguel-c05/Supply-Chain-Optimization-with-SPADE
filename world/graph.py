@@ -20,33 +20,73 @@ class Node:
 
 
 class Edge:
-    def __init__(self, node1, node2, weight=None):
+    def __init__(self, node1, node2, weight=None, distance=None):
         self.node1 = node1
         self.node2 = node2
         self.weight = weight
+        self.initial_weight = weight
+        self.distance = distance
+        self.fuel_consumption = 0  # liters
     
     def __repr__(self):
-        return f"Edge({self.node1.id} -> {self.node2.id}, weight={self.weight})"
-    
+        return f"Edge({self.node1.id} -> {self.node2.id}, weight={self.weight}, distance={self.distance})"
+
     def get_other_node(self, node):
         return self.node2 if node == self.node1 else self.node1
+
+    def calculate_fuel_consumption(self, fuel_efficiency=6.5, vehicle_weight=1500):
+        """
+        Calcula o consumo de combustível baseado na distância e no tráfego (weight).
+        
+        Args:
+            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/km)
+            vehicle_weight: peso do veículo em kg (padrão: 1500 kg)
+        
+        Returns:
+            float: litros necessários para atravessar a aresta
+        
+        Fórmula: fuel = (distance/1000) * fuel_efficiency * (1 + traffic_factor) * weight_factor
+        - distance está em metros, divide por 1000 para converter para km
+        - traffic_factor aumenta o consumo com base no tráfego (devido à menor velocidade)
+        - weight é em segundos, normalizamos por um fator para ajustar o impacto
+        """
+
+        if self.distance is None or self.weight is None or self.initial_weight is None:
+            return 0
+        
+        # Fator de tráfego: quanto mais tempo na aresta, mais combustível é usado (baixa velocidade = mais consumo)
+        # Normalizamos a diferença: (weight - initial_weight) / 10.0
+        traffic_factor = max(0, (self.weight - self.initial_weight) / 10.0)
+        
+        # Fator de peso: veículos mais pesados consomem mais
+        weight_factor = 1 + 0.01 * ((vehicle_weight - 1500) / 100)
+
+        #print(self.distance, fuel_efficiency, traffic_factor, weight_factor)
+        self.fuel_consumption = (self.distance / 1000) * fuel_efficiency * (1 + traffic_factor) * weight_factor
+
+        return round(self.fuel_consumption, 2)
+    
+    def get_fuel_consumption(self):
+        """Retorna o consumo de combustível da aresta"""
+        return round(self.fuel_consumption, 2)
 
 
 class Graph:
     def __init__(self):
         self.nodes = {}
         self.edges = []
+        self.infected_edges = []
     
     def add_node(self, node):
         self.nodes[node.id] = node
     
-    def add_edge(self, node1, node2, weight=None):
+    def add_edge(self, node1, node2, weight=None, distance=None):
         # Cria aresta de node1 para node2
-        edge1 = Edge(node1, node2, weight)
+        edge1 = Edge(node1, node2, weight, distance)
         self.edges.append(edge1)
         
         # Cria aresta de node2 para node1 (direção oposta)
-        edge2 = Edge(node2, node1, weight)
+        edge2 = Edge(node2, node1, weight, distance)
         self.edges.append(edge2)
         
         # Adiciona vizinhos bidireccionalmente
@@ -70,6 +110,22 @@ class Graph:
     def get_neighbors(self, node_id):
         node = self.get_node(node_id)
         return node.neighbors if node else []
+    
+    def calculate_all_fuel_consumption(self, fuel_efficiency=6.5):
+        """
+        Calcula o consumo de combustível para todas as arestas.
+        
+        Args:
+            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/km)
+
+        Returns:
+            dict: mapeamento de aresta -> consumo de combustível
+        """
+        fuel_map = {}
+        for edge in self.edges:
+            edge_key = (edge.node1.id, edge.node2.id)
+            fuel_map[edge_key] = edge.calculate_fuel_consumption(fuel_efficiency)
+        return fuel_map
     
     @staticmethod
     def grid_2d_graph(width, height):
