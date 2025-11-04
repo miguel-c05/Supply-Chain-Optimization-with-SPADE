@@ -7,7 +7,22 @@ from world.graph import Graph
 
 class World:
 
-    def __init__(self, width=5, height=5, mode="uniform", seed=None, gas_stations=0, warehouses=0, suppliers=0, stores=0, highway=False, max_cost=10, tick=0):
+    def __init__(self, 
+                 width=5, 
+                 height=5, 
+                 mode="uniform", 
+                 seed=None, 
+                 gas_stations=0, 
+                 warehouses=0, 
+                 suppliers=0, 
+                 stores=0, 
+                 highway=False, 
+                 max_cost=10,
+                 traffic_probability=0.3,
+                 traffic_spread_probability=0.85,
+                 traffic_interval=3,
+                 untraffic_probability=0.3,
+                 tick=0):
         
         self.width = width
         self.height = height
@@ -38,6 +53,13 @@ class World:
 
         if highway:
             self._add_highway_edge()
+
+
+        self.graph.infected_edges = []  # Lista para rastrear arestas infectadas
+        self.traffic_probability = traffic_probability
+        self.traffic_spread_probability = traffic_spread_probability
+        self.untraffic_probability = untraffic_probability
+        self.traffic_interval = traffic_interval
 
     def _add_highway_edge(self):
         """Adiciona uma aresta de alta capacidade entre dois nós aleatórios com minimo de distancia manhattan de 5"""
@@ -84,7 +106,7 @@ class World:
         cost_matrix = [[0 for _ in range(self.width * self.height + 1)] for _ in range(self.width * self.height + 1)]
         
         if self.mode == "uniform":
-            uniform_cost = random.randint(1, self.max_cost)
+            uniform_cost = 1
             for edge in self.graph.edges:
                 u, v = edge.node1.id, edge.node2.id
                 cost_matrix[u][v] = uniform_cost
@@ -101,6 +123,7 @@ class World:
         for edge in self.graph.edges:
             u, v = edge.node1.id, edge.node2.id
             edge.weight = self.cost_matrix[u][v]
+            edge.initial_weight = self.cost_matrix[u][v]
 
     def _assign_facilities(self):
         """Atribui facilities (warehouses, suppliers, stores, gas_stations) a nós aleatórios"""
@@ -176,7 +199,7 @@ class World:
             elif node.gas_station:
                 node_colors.append('yellow')
             else:
-                node_colors.append('lightblue')
+                node_colors.append('lightgrey')
         
         # Desenha os nós com suas cores
         nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1000)
@@ -186,8 +209,13 @@ class World:
         for edge in self.graph.edges:
             u, v = edge.node1.id, edge.node2.id
             
-            # Define cor baseada na direção: u->v usa azul, v->u usa vermelho
-            color = 'blue' if u < v else 'red'
+            # Define cor baseada no estado do tráfego
+            # Se o peso é diferente do peso inicial, é vermelho (infectado)
+            # Caso contrário, usa azul para u<v e lightblue para v>u
+            if edge.weight != edge.initial_weight:
+                color = 'red'
+            else:
+                color = 'blue' if u < v else 'lightblue'
             
             # Desenha a aresta
             nx.draw_networkx_edges(G, pos, [(u, v)], edge_color=color, 
@@ -212,7 +240,10 @@ class World:
             legend_elements.append(mpatches.Patch(color='purple', label='Store'))
         if self.gas_stations > 0:
             legend_elements.append(mpatches.Patch(color='yellow', label='Gas Station'))
-        legend_elements.append(mpatches.Patch(color='lightblue', label='Empty'))
+        legend_elements.append(mpatches.Patch(color='lightgrey', label='Empty'))
+        legend_elements.append(mpatches.Patch(color='blue', label='Edge Direction (u→v)'))
+        legend_elements.append(mpatches.Patch(color='lightblue', label='Edge Direction (v→u)'))
+        legend_elements.append(mpatches.Patch(color='red', label='Infected Edge'))
         
         plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
 
@@ -223,21 +254,85 @@ class World:
 
     def traffic(self):
         """Aumenta o custo de uma edge aleatória para simular tráfego"""
-        edge = random.choice(self.graph.edges)
-        u, v = edge.node1.id, edge.node2.id
-        increase = random.randint(1, 5)
-        self.cost_matrix[u][v] += increase
-        edge.weight = min(self.cost_matrix[u][v], self.max_cost)
-        print(f"Traffic added: Cost from Node {u} to Node {v} increased by {increase} to {edge.weight}")
+        edges = random.sample(self.graph.edges, min(3, len(self.graph.edges)))
+        for edge in edges:
+            u, v = edge.node1.id, edge.node2.id
+            increase = random.randint(1, 5)
+            self.cost_matrix[u][v] += increase
+            edge.weight = min(self.cost_matrix[u][v], self.max_cost)
+            
+            # Adiciona aresta à lista de infected_edges
+            edge_key = (u, v)
+            if edge_key not in self.graph.infected_edges:
+                self.graph.infected_edges.append(edge_key)
+            
+            self.dinamic_traffic(edge, visited=set())
+            print(f"Traffic added: Cost from Node {u} to Node {v} increased by {increase} to {edge.weight}")
+
+    def dinamic_traffic(self, edge, visited=None):
+        """Propaga tráfego dinamicamente para arestas adjacentes na mesma direção"""
+        if visited is None:
+            visited = set()
         
-
-    def tick(self, traffic_interval=5):
-        """Avança o estado do mundo em um tick (a implementar)"""
-
-        if self.tick_counter % traffic_interval == 0:
+        # Evita processar a mesma aresta novamente
+        edge_key = (edge.node1.id, edge.node2.id)
+        if edge_key in visited:
+            return
+        visited.add(edge_key)
+        
+        # O nó para onde queremos propagar tráfego é o nó2 da aresta atual
+        target_node = edge.node2.id
+        
+        for graph_edge in self.graph.edges:
+            # Verifica se a aresta começa no nó alvo (mesma direção)
+            if graph_edge.node1.id == target_node:
+                
+                # Evita processar a mesma aresta
+                graph_edge_key = (graph_edge.node1.id, graph_edge.node2.id)
+                if graph_edge_key in visited:
+                    continue
+                    
+                p = random.uniform(0, 1)
+                if p > self.traffic_spread_probability:
+                    u, v = graph_edge.node1.id, graph_edge.node2.id
+                    increase = random.randint(1, 3)
+                    self.cost_matrix[u][v] += increase
+                    graph_edge.weight = min(self.cost_matrix[u][v], self.max_cost)
+                    
+                    # Adiciona aresta à lista de infected_edges
+                    if graph_edge_key not in self.graph.infected_edges:
+                        self.graph.infected_edges.append(graph_edge_key)
+                    
+                    print(f"Dynamic traffic: Cost from Node {u} to Node {v} increased by {increase} to {graph_edge.weight}")
+                    self.dinamic_traffic(graph_edge, visited)
+        
+    def _restore_infected_edges(self):
+        """Restaura as arestas infectadas com probabilidade > 0.2"""
+        edges_to_remove = []
+        
+        for edge_key in self.graph.infected_edges:
             p = random.uniform(0, 1)
-            if p > 0.5:
+            if p > self.untraffic_probability:
+                u, v = edge_key
+                edge = self.graph.get_edge(u, v)
+                if edge:
+                    edge.weight = edge.initial_weight
+                    self.cost_matrix[u][v] = edge.initial_weight
+                    edges_to_remove.append(edge_key)
+                    print(f"Edge ({u}, {v}) restored to initial weight: {edge.initial_weight}")
+        
+        # Remove arestas restauradas da lista de infected_edges
+        for edge_key in edges_to_remove:
+            self.graph.infected_edges.remove(edge_key)
+        
+    def tick(self):
+        """Avança o estado do mundo em um tick (a implementar)"""
+        # Restaura arestas infectadas
+        self._restore_infected_edges()
+
+        if self.tick_counter % self.traffic_interval == 0:
+            p = random.uniform(0, 1)
+            if p > self.traffic_probability:
                 self.traffic()
 
         self.tick_counter += 1
-

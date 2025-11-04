@@ -24,6 +24,7 @@ class Edge:
         self.node1 = node1
         self.node2 = node2
         self.weight = weight
+        self.initial_weight = weight
     
     def __repr__(self):
         return f"Edge({self.node1.id} -> {self.node2.id}, weight={self.weight})"
@@ -36,6 +37,7 @@ class Graph:
     def __init__(self):
         self.nodes = {}
         self.edges = []
+        self.infected_edges = []
     
     def add_node(self, node):
         self.nodes[node.id] = node
