@@ -1,7 +1,7 @@
 from world.world import World
 
 w = World(
-    mode="different", 
+    mode="uniform", 
     max_cost=5, 
     seed=None, 
     gas_stations=0, 
