@@ -26,6 +26,7 @@ class Warehouse(Agent):
             warehouse_agent.pending_orders[store_agent.jid]
     
     What is missing (TODO):
+        - Lock stock in order to make process several requests at a time
         - Buy materials from a Supplier Agent (placeholder setup) 
         - Setup intelligent buying method
         - Communicate with other Warehouses
@@ -38,7 +39,7 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
         
             print("Awaiting buy request...")
-            msg = await self.receive(timeout=60)
+            msg = await self.receive(timeout=20)
             if msg != None:
                 """
                 Messages with metadata ("performative", "store", "buy") have body
@@ -50,25 +51,39 @@ class Warehouse(Agent):
                 request_id = int(request[0])
                 quant = int(request[1])
                 product = request[2]
-                print(f"{self.agent.jid}> Got a request from {msg.sender}: id={request_id} quant={quant} product={product}")
+                print(f"{agent.jid}> Got a request from {msg.sender}: id={request_id} quant={quant} product={product}")
                 
                 if (product in agent.stock.keys()) and agent.stock[product] >= quant:
                     accept_behav = agent.AcceptBuyRequest(msg)
+                    print(f"{self.agent.jid}> Locking {quant} products {product}...")
+                    agent.stock[product] -= quant
+                    
+                    if product in agent.locked_stock:
+                        agent.locked_stock[product] += quant
+                    else: agent.locked_stock[product] = quant
+                    
+                    print("="*30)
+                    print("Items locked. Current locked stock is:")
+                    for product, amount in agent.locked_stock.items():
+                        print(f"{product}: {amount}")
+                    print("="*30)
+                    
+                    
                     agent.add_behaviour(accept_behav)
                     
                     # Aguardar o comportamento terminar
-                    await accept_behav.join()
-                    print(f"{self.agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
+                    await accept_behav.join() # TODO - remove when locking is implemented
+                    print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
                     
                     print("="*30)
                     print("Current stock:")
-                    for product, amount in self.agent.stock.items():
+                    for product, amount in agent.stock.items():
                         print(f"{product}: {amount}")
                     print("="*30)
                 else:
-                    print(f"{self.agent.jid}> Could not satisfy request.")
+                    print(f"{agent.jid}> Could not satisfy request.")
             else:
-                print(f"{self.agent.jid}> Did not get any buy requests in 60 seconds.")
+                print(f"{agent.jid}> Did not get any buy requests in 20 seconds.")
 
     class AcceptBuyRequest(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -96,7 +111,7 @@ class Warehouse(Agent):
             await self.send(msg)
             
             agent : Warehouse = self.agent
-            confirm_behav = agent.ReceiveConfirmation()
+            confirm_behav = agent.ReceiveConfirmation(msg)
             template = Template()
             template.set_metadata("performative", "store-confirm")
             
@@ -107,6 +122,13 @@ class Warehouse(Agent):
             print(f"{self.agent.jid}> ReceiveConfirmation finished, stock updated.")
             
     class ReceiveConfirmation(OneShotBehaviour):
+        def __init__(self, accept_msg : Message):
+            super().__init__()
+            bod = accept_msg.body.split(" ")
+            self.accepted_id = bod[0]
+            self.accepted_quantity = bod[1]
+            self.accepted_product = bod[2]
+        
         async def run(self):
             print(f"{self.agent.jid}> Waiting for store confirmation...")
             msg : Message = await self.receive(timeout=10)
@@ -119,8 +141,8 @@ class Warehouse(Agent):
                 quantity = int(request[1])
                 product = request[2]
                 
-                # Update warehouse stock
-                self.agent.stock[product] -= quantity
+                # Update warehouse locked stock
+                self.agent.locked_stock[product] -= quantity
                 
                 # Put bought items aside (in self.pending_orders)
                 pending_orders = self.agent.pending_orders
@@ -136,7 +158,9 @@ class Warehouse(Agent):
                     
                 print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
             else:
-                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds")
+                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds. Unlocking stock...")
+                self.agent.locked_stock[self.accepted_product] -= self.accepted_quantity
+                self.agent.stock[self.accepted_product] += self.accepted_quantity
                 
             
             
@@ -164,6 +188,9 @@ class Warehouse(Agent):
             print(f"{product}: {amount}")
         print("="*30)
         
+        # Dict with products as keys and the sum of requested items as values
+        self.locked_stock = {}
+        
         """
         self.pending_orders has the following structure:
         
@@ -186,12 +213,9 @@ class Warehouse(Agent):
 
 
 """
-MAIN FOR TESTING
-
-Working so far:
-    - Permanently listening for requests
-    - Recieves messages with metadata ("performative", "store-buy")
-    - If request is satisfiable, sends confirmation message and updates stock
+=================================
+        MAIN FOR TESTING
+=================================
 """
 async def main():
     # Tente com diferentes credenciais
@@ -204,28 +228,53 @@ async def main():
         print(f"Failed to start agent: {e}")
         return
     
-    # Criar comportamento para enviar mensagem de teste
-    class SendTestMessage(OneShotBehaviour):
+    # Simulate first buy request
+    class SendFirstBuyRequest(OneShotBehaviour):
         async def run(self):
+            await asyncio.sleep(1)
             msg = Message(to="warehouse@localhost")
             msg.set_metadata("performative", "store-buy")
-            msg.body = "1 10 A"
+            msg.body = "1 5 A"
             await self.send(msg)
-            print("Test message sent!")
+            print("First buy request sent: 5 units of A")
     
-    ware_agent.add_behaviour(SendTestMessage())
+    ware_agent.add_behaviour(SendFirstBuyRequest())
     
-    # Criar comportamento para enviar mensagem de confirmação de teste
-    class SendTestConfirmation(OneShotBehaviour):
+    # Simulate first confirmation
+    class SendFirstConfirmation(OneShotBehaviour):
         async def run(self):
+            await asyncio.sleep(3)
             msg = Message(to="warehouse@localhost")
             msg.set_metadata("performative", "store-confirm")
-            msg.body = "1 3 A"
+            msg.body = "1 5 A"
             await self.send(msg)
-            print("Test confirmation message sent!")
-
-    await asyncio.sleep(2)
-    ware_agent.add_behaviour(SendTestConfirmation())
+            print("First confirmation sent!")
+    
+    ware_agent.add_behaviour(SendFirstConfirmation())
+    
+    # Simulate second buy request
+    class SendSecondBuyRequest(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(5)
+            msg = Message(to="warehouse@localhost")
+            msg.set_metadata("performative", "store-buy")
+            msg.body = "2 3 B"
+            await self.send(msg)
+            print("Second buy request sent: 3 units of B")
+    
+    ware_agent.add_behaviour(SendSecondBuyRequest())
+    
+    # Simulate second confirmation
+    class SendSecondConfirmation(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(7)
+            msg = Message(to="warehouse@localhost")
+            msg.set_metadata("performative", "store-confirm")
+            msg.body = "2 3 B"
+            await self.send(msg)
+            print("Second confirmation sent!")
+    
+    ware_agent.add_behaviour(SendSecondConfirmation())
     
     await spade.wait_until_finished(ware_agent)
     
