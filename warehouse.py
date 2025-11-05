@@ -63,7 +63,7 @@ class Warehouse(Agent):
                     else: agent.locked_stock[product] = quant
                     
                     print("="*30)
-                    print("Items locked. Current locked stock is:")
+                    print(f"Items locked at {agent.jid}.\nCurrent locked stock is:")
                     for product, amount in agent.locked_stock.items():
                         print(f"{product}: {amount}")
                     print("="*30)
@@ -73,7 +73,6 @@ class Warehouse(Agent):
                     
                     # Aguardar o comportamento terminar
                     await accept_behav.join() # TODO - remove when locking is implemented
-                    print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
                     
                     print("="*30)
                     print("Current stock:")
@@ -116,10 +115,11 @@ class Warehouse(Agent):
             template.set_metadata("performative", "store-confirm")
             
             agent.add_behaviour(confirm_behav, template)
+            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
             
             # Aguardar a confirmação ser recebida antes de terminar
             await confirm_behav.join()
-            print(f"{self.agent.jid}> ReceiveConfirmation finished, stock updated.")
+            
             
     class ReceiveConfirmation(OneShotBehaviour):
         def __init__(self, accept_msg : Message):
@@ -157,10 +157,13 @@ class Warehouse(Agent):
                         
                     
                 print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
+                print(f"{self.agent.jid}> ReceiveConfirmation finished, stock updated.")
             else:
                 print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds. Unlocking stock...")
                 self.agent.locked_stock[self.accepted_product] -= self.accepted_quantity
                 self.agent.stock[self.accepted_product] += self.accepted_quantity
+            
+            
                 
             
             
@@ -179,8 +182,8 @@ class Warehouse(Agent):
     
 
     async def setup(self):
-        self.stock = {"A" : random.randint(0,20),
-                      "B" : random.randint(0,20),
+        self.stock = {"A" : random.randint(0,20) + 5, # TODO - revert to normal
+                      "B" : random.randint(0,20) + 5, # TODO - revert to normal
                       "C" : random.randint(0,20),}
         print("="*30)
         print(f"Startup {self.jid} stock:")
