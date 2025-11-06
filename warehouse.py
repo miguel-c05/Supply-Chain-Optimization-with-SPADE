@@ -26,11 +26,26 @@ class Warehouse(Agent):
             warehouse_agent.pending_orders[store_agent.jid]
     
     What is missing (TODO):
-        - Lock stock in order to make process several requests at a time
         - Buy materials from a Supplier Agent (placeholder setup) 
         - Setup intelligent buying method
         - Communicate with other Warehouses
         - Communicate with Vehicles
+        
+    Class variables:
+        - self.stock (dict()): current AVAILABLE stock
+            - keys: products
+            - values: quantity
+        
+        - self.locked_stock (dict()): stock that is being used for some request process
+            - keys: products
+            - values: quantity
+
+        - self.pending_orders (dict(dict())): each item is an order or group of orders
+        for a said store
+            - keys: store.jid
+            - values: dict()
+                - keys: product
+                - values: quantity
     """
     
     
@@ -233,7 +248,6 @@ class Warehouse(Agent):
         template = Template()
         template.set_metadata("performative", "store-buy")
         self.add_behaviour(behav, template)
-        
 
 
 """
