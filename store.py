@@ -38,24 +38,30 @@ class Store(Agent):
             for contact in contacts:
                 msg : Message = Message(to=contact)
                 msg.set_metadata("performative", "store-buy")
-                msg.body = f"{agent.request_counter} {self.quantity} {self.product}"
+                msg.set_metadata("store_id", str(agent.jid))
+                msg.set_metadata("request_id", str(agent.request_counter))
+                msg.body = f"{self.quantity} {self.product}"
                 
-                print(f"{self.agent.jid}> Sent request \"{msg.body}\" to {msg.to}")
+                print(f"{self.agent.jid}> Sent request (id={agent.request_counter}): \"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
+            
+            request_id_for_template = agent.request_counter
             agent.request_counter += 1
                 
-            behav = agent.RecieveAcceptance()
+            behav = agent.RecieveAcceptance(request_id_for_template)
             template = Template()
             template.set_metadata("performative", "warehouse-accept")
+            template.set_metadata("store_id", str(agent.jid))
+            template.set_metadata("request_id", str(request_id_for_template))
             agent.add_behaviour(behav, template)
             
             await behav.join()
 
     class RecieveAcceptance(OneShotBehaviour):
-        def __init__(self, buy_msg : Message):
+        def __init__(self, request_id : int):
             super().__init__()
-            self.buy_msg : Message = buy_msg
+            self.request_id = request_id
             
         async def run(self):
             self.agent : Store
@@ -64,10 +70,10 @@ class Store(Agent):
             msg : Message = await self.receive(timeout=5)
             
             if msg != None:
+                rec_id = msg.get_metadata("request_id")
                 rec = msg.body.split(" ")
-                rec_id = rec[0]
-                quantity = rec[1]
-                product = rec[2]
+                quantity = int(rec[0])
+                product = rec[1]
                 
                 print(
                     f"{self.agent.jid}> Recieved acceptance from {msg.sender}: "
@@ -92,9 +98,10 @@ class Store(Agent):
         def __init__(self, msg : Message):
             super().__init__()
             self.dest = msg.sender
-            self.confirmation = msg.body
-            self.quantity = self.confirmation.split(" ")[1]
-            self.product = self.confirmation.split(" ")[2]
+            self.request_id = msg.get_metadata("request_id")
+            parts = msg.body.split(" ")
+            self.quantity = int(parts[0])
+            self.product = parts[1]
             
         
         async def run(self):
@@ -107,7 +114,10 @@ class Store(Agent):
             
             msg = Message(to=self.dest)
             msg.set_metadata("performative", "store-confirm")
-            msg.body = self.confirmation
+            msg.set_metadata("warehouse_id", str(self.dest))
+            msg.set_metadata("store_id", str(agent.jid))
+            msg.set_metadata("request_id", str(self.request_id))
+            msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
             

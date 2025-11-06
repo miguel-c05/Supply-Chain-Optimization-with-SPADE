@@ -27,15 +27,14 @@ async def main():
         port += 1
     
     # Adicionar o behaviour em vez de apenas criar
-    behav = store_agent.BuyProduct(3, "A")
+    behav = store_agent.BuyProduct(10, "A")
     store_agent.add_behaviour(behav)
-    await behav.join()
     print("="*60)
-    print("END OF BUY A. MOVING TO BUY B")
+    print("MOVING TO BUY B")
     print("="*60)
     
     
-    behav = store_agent.BuyProduct(3, "B")
+    behav = store_agent.BuyProduct(10, "B")
     store_agent.add_behaviour(behav)
     
     await spade.wait_until_finished(store_agent)
