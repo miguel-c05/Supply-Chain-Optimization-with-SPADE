@@ -1,5 +1,6 @@
 import asyncio
 import random
+import queue
 import spade
 from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
@@ -122,7 +123,21 @@ class Store(Agent):
             await self.send(msg)
             
             print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
-    
+
+    class RetryPreviousBuy(OneShotBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+            if agent.active_requests
+            
+    class CommunicationPhase(OneShotBehaviour):
+        async def run(self):
+            pass
+        
+    class ActionPhase(OneShotBehaviour):
+        async def run(self):
+            pass
+        
     
     async def setup(self):
         self.stock = {}
