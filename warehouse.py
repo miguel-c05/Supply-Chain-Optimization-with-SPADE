@@ -40,12 +40,12 @@ class Warehouse(Agent):
             - keys: products
             - values: quantity
 
-        - self.pending_orders (dict(dict())): each item is an order or group of orders
-        for a said store
+        - self.pending_orders (dict(list())): each key is a store JID and the value
+        is a list of confirmed buy Message objects for that store. Use this to
+        retrieve all confirmed orders for a store (useful for Vehicles or
+        transport assignment).
             - keys: store.jid
-            - values: dict()
-                - keys: product
-                - values: quantity
+            - values: list() of spade.message.Message (confirmed "store-confirm" messages)
     """
     
     
@@ -157,15 +157,14 @@ class Warehouse(Agent):
                 self.agent.locked_stock[product] -= quantity
                 
                 # Put bought items aside (in self.pending_orders)
-                pending_orders = self.agent.pending_orders
-                jid = msg.sender
+                # Store the confirmation message object so other agents (e.g.
+                # Vehicles) can inspect the full message when assigning/collecting
+                # orders. pending_orders[jid] is a list of Message objects.
+                pending_orders : dict = self.agent.pending_orders
+                jid = str(msg.sender)
                 if jid not in pending_orders:
-                    pending_orders[jid] = {}
-                    pending_orders[jid][product] = quantity
-                elif product not in pending_orders[jid]:
-                    pending_orders[jid][product] = quantity
-                else:
-                    pending_orders[jid][product] += quantity
+                    pending_orders[jid] = []
+                pending_orders[jid].append(msg)
                         
                     
                 print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")

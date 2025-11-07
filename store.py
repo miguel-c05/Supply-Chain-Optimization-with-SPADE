@@ -1,5 +1,6 @@
 import asyncio
 import random
+import queue
 import spade
 from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
@@ -20,7 +21,17 @@ class Store(Agent):
         previous BuyProduct request
     
     What is missing (TODO):
-        - Implement repetition for missed requests (already stored in self.active_requests)
+        - Implement repetition for missed requests (already stored in self.failed_requests)
+        
+    Class variables:
+        - self.stock (dict): current inventory
+            - keys (str): product
+            - values (int): quantity
+
+        - self.request_counter (int): a counter that serves as the requests id
+        - self.current_buy_request (Message): holds the current buy request Message
+        - self.failed_requests (queue.Queue(Message)): a queue that holds all failed buy request
+        Messages. A request is enqueued if ReceiveAcceptance times out.
     """
     
     class BuyProduct(OneShotBehaviour):
@@ -32,36 +43,43 @@ class Store(Agent):
         
         async def run(self):
             agent : Store = self.agent
-            agent.active_requests[agent.request_counter] = (self.quantity, self.product)
             contacts = list(agent.presence.contacts.keys())
             
+            # Get request_id before sending
+            request_id_for_template = agent.request_counter
+            agent.request_counter += 1
+            
+            msg = None  # Will store the last sent message for current_buy_request
             for contact in contacts:
-                msg : Message = Message(to=contact)
+                msg = Message(to=contact)
                 msg.set_metadata("performative", "store-buy")
                 msg.set_metadata("store_id", str(agent.jid))
-                msg.set_metadata("request_id", str(agent.request_counter))
+                msg.set_metadata("request_id", str(request_id_for_template))
                 msg.body = f"{self.quantity} {self.product}"
                 
-                print(f"{self.agent.jid}> Sent request (id={agent.request_counter}): \"{msg.body}\" to {msg.to}")
+                print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
+                      f"\"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
             
-            request_id_for_template = agent.request_counter
-            agent.request_counter += 1
+            # Store the last message (or could store all if needed)
+            if msg:
+                agent.current_buy_request = msg
+        
+                behav = agent.RecieveAcceptance(msg)
+                template = Template()
+                template.set_metadata("performative", "warehouse-accept")
+                template.set_metadata("store_id", str(agent.jid))
+                template.set_metadata("request_id", str(request_id_for_template))
+                agent.add_behaviour(behav, template)
                 
-            behav = agent.RecieveAcceptance(request_id_for_template)
-            template = Template()
-            template.set_metadata("performative", "warehouse-accept")
-            template.set_metadata("store_id", str(agent.jid))
-            template.set_metadata("request_id", str(request_id_for_template))
-            agent.add_behaviour(behav, template)
-            
-            await behav.join()
+                await behav.join()
 
     class RecieveAcceptance(OneShotBehaviour):
-        def __init__(self, request_id : int):
+        def __init__(self, msg : Message):
             super().__init__()
-            self.request_id = request_id
+            self.request_id = msg.get_metadata("request_id")
+            self.buy_msg = msg.body
             
         async def run(self):
             self.agent : Store
@@ -82,17 +100,22 @@ class Store(Agent):
                     f"product={product}"
                 )
                 
-                
-                self.agent.active_requests.pop(rec_id, None)
-                
                 behav = self.agent.SendConfirmation(msg)
                 self.agent.add_behaviour(behav)
                 
                 await behav.join()
             
             else:
-                print(f"{self.agent.jid}> No acceptance gotten. Request\"{self.buy_msg}\""
-                      f"saved in self.active_requests[{self.buy_msg.split(" ")[0]}]")
+                print(f"{self.agent.jid}> No acceptance gotten. Request \"{self.buy_msg}\" "
+                      f"saved in self.failed_requests")
+                
+                # Actually add the failed request to the queue
+                agent : Store = self.agent
+                failed_msg = Message(to=agent.current_buy_request.to)
+                agent.set_buy_metadata(failed_msg)
+                failed_msg.set_metadata("request_id", str(self.request_id))
+                failed_msg.body = self.buy_msg
+                agent.failed_requests.put(failed_msg)
     
     class SendConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -122,12 +145,74 @@ class Store(Agent):
             await self.send(msg)
             
             print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
-    
+
+    class RetryPreviousBuy(OneShotBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+            if not agent.failed_requests.empty():
+                request : Message = agent.failed_requests.get()
+                request_id = request.get_metadata("request_id")
+                contacts = list(agent.presence.contacts.keys())
+                
+                for contact in contacts:
+                    msg : Message = Message(to=contact)
+                    agent.set_buy_metadata(msg)
+                    msg.set_metadata("request_id", str(request_id))
+                    msg.body = request.body
+
+                    print(f"{self.agent.jid}> Retrying request (id={request_id}):"
+                          f"\"{msg.body}\" to {msg.to}")
+
+                    await self.send(msg)
+
+                behav = agent.RecieveAcceptance(msg)
+                template = Template()
+                template.set_metadata("performative", "warehouse-accept")
+                template.set_metadata("store_id", str(agent.jid))
+                template.set_metadata("request_id", str(request_id))
+                agent.add_behaviour(behav, template)
+
+                await behav.join()
+                
+            
+    class CommunicationPhase(OneShotBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+        
+        
+            
+            template = Template()
+            # TODO - introduzir metadata de msg de "end action"
+            behav = agent.ActionPhase()
+            agent.add_behaviour(behav, template)
+        
+    class ActionPhase(OneShotBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+            
+            
+            end_msg = await self.receive(timeout=40)
+            
+            template = Template()
+            # TODO - introduzir metadata de "end communication"
+            behav = agent.CommunicationPhase()
+        
+    def set_buy_metadata(self, msg : Message):
+        msg.set_metadata("performative", "store-buy")
+        msg.set_metadata("store_id", str(self.jid))
+        # Note: request_id should be set separately by the caller
     
     async def setup(self):
         self.stock = {}
-        self.active_requests = {}
+        self.current_buy_request : Message = None
+        self.failed_requests : queue.Queue = queue.Queue()
         self.request_counter = 0
+        
+        self.communication_queue : queue.Queue = queue.Queue()
+        self.action_queue : queue.Queue = queue.Queue()
 
 
 async def main():
@@ -153,13 +238,33 @@ async def main():
             test_msg = Message(to="store@localhost")
             test_msg.sender = "warehouse@localhost"
             test_msg.set_metadata("performative", "warehouse-accept")
-            test_msg.body = "0 3 A"
+            test_msg.set_metadata("warehouse_id", "warehouse@localhost")
+            test_msg.set_metadata("store_id", "store@localhost")
+            test_msg.set_metadata("request_id", "0")
+            test_msg.body = "3 A"
             
             await self.send(test_msg)
-            print(f"Sent acceptance of request {test_msg.body}")
+            print(f"Sent acceptance of request {test_msg.body} with id={test_msg.get_metadata('request_id')}")
 
-    await asyncio.sleep(2)
+    behav = SendTestAcceptance()
     store_agent.add_behaviour(SendTestAcceptance())
+    await asyncio.sleep(2)
+    
+    print("\n=== Testing Retry Method ===")
+    await asyncio.sleep(3)
+    
+    # Manually add a failed request to the queue for testing
+    failed_msg = Message(to="warehouse@localhost")
+    store_agent.set_buy_metadata(failed_msg)
+    failed_msg.body = "5 B"
+    store_agent.failed_requests.put(failed_msg)
+    print(f"Added failed request to queue: {failed_msg.body}")
+    
+    # Trigger retry behaviour
+    retry_behav = store_agent.RetryPreviousBuy()
+    store_agent.add_behaviour(retry_behav)
+    
+    await asyncio.sleep(2)
     
     await spade.wait_until_finished(store_agent)
     
