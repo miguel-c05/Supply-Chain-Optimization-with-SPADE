@@ -1,6 +1,7 @@
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
+from spade.template import Template
 import asyncio
 from datetime import datetime
 from clock_utils import ClockSyncMixin
@@ -23,37 +24,66 @@ class ClockRegistrationBehaviour(OneShotBehaviour, ClockSyncMixin):
         print(f"[{self.agent.name}] Enviada solicitação de registro ao relógio")
 
 
-class SimpleTestAgent(Agent):
+class MiddleManAgent(Agent):
     """
-    Agente simples para testar o Relógio.
+    Agente de middle man para ser auxiliar de todos os agentes do universo.
     - Regista-se no relógio
     - Imprime quando recebe o tick (fase de comunicação)
     - Imprime quando recebe a fase de ação
-    - Espera 1 segundo por cada ação
+    Ele deve receber a mensagem e deve comunicar com o relogio e o agente. 
     
     Usa ClockSyncMixin para facilitar a sincronização com o relógio.
     """
 
-    def __init__(self, jid, password, clock_jid):
+    def __init__(self, jid, password, clock_jid, agent_jid):
         super().__init__(jid, password)
         self.clock_jid = clock_jid
-        
-        self.communication_phase = False
-        self.action_phase = False
-
+        self.agent_jid = agent_jid
         # Configurar sincronização com o relógio
 
     async def setup(self):
         print(f"[{self.name}] Agente de teste inicializado")
         
+        # Template que aceita mensagens de ambas as fases (communication ou action)
+        # e qualquer valor de tick
+        template1 = Template()
+        template1.to = self.clock_jid
+        template1.sender = self.agent_jid
+        template1.metadata = {"phase": "communication"}
+        template1.metadata = {"phase": "action"}
+        template1.metadata = {"tick": "*"}
+        self.add_behaviour(self.Communicate_with_agent_behaviour(), template1)
+
         # Adicionar behaviour de registro (OneShotBehaviour)
         self.add_behaviour(ClockRegistrationBehaviour())
-        
+
+        template2 = Template()
+        template2.to = self.agent_jid
+        template2.sender = self.jid
         # Adicionar behaviour principal (CyclicBehaviour)
-        self.add_behaviour(self.ClockCommunicationBehaviour())
+        self.add_behaviour(self.TestBehaviour())
+
+    class Communicate_with_agent_behaviour(CyclicBehaviour, ClockSyncMixin):
+        async def run(self):
+            msg = await self.receive(timeout=1)
+            if msg:
+                try:
+                    msg_body = json.loads(msg.body)
+                    phase = msg_body.get("phase")
+                    tick = msg_body.get("tick")  # Obter tick da mensagem, default 0
+                    
+                    if phase == "communication":
+                        print(f"[{self.agent.name}] Mensagem de comunicação recebida do agente (tick {tick}): {msg.body}")
+                        await self.confirm_communication_phase(tick)
+                    elif phase == "action":
+                        print(f"[{self.agent.name}] Mensagem de ação recebida do agente (tick {tick}): {msg.body}")
+                        await self.confirm_action_phase(tick)
+                except json.JSONDecodeError:
+                    print(f"[{self.agent.name}] Erro ao decodificar mensagem: {msg.body}")
 
 
-    class ClockCommunicationBehaviour(CyclicBehaviour, ClockSyncMixin):
+                
+    class TestBehaviour(CyclicBehaviour, ClockSyncMixin):
         """
         Comportamento que responde às mensagens do relógio.
         Usa handle_clock_message() do ClockSyncMixin para processar mensagens.
@@ -71,7 +101,6 @@ class SimpleTestAgent(Agent):
                     print(f"[{self.agent.name}] REGISTRADO NO RELÓGIO")
                     print(f"[{self.agent.name}] Tick atual: {data.get('current_tick')}")
                     print(f"[{self.agent.name}] Duração do tick: {data.get('tick_duration')}s\n")
-                    
                 
                 # Novo tick (FASE DE COMUNICAÇÃO)
                 elif msg_type == "new_tick":
@@ -83,9 +112,9 @@ class SimpleTestAgent(Agent):
                     print(f"[{self.agent.name}]  FASE: {phase.upper()}")
                     print(f"{'─'*60}")
                     
-                    # Confirmar fase de comunicação usando o mixin
-                    await self.confirm_communication_phase(tick)
-                    print(f"[{self.agent.name}] Confirmação de comunicação enviada (tick {tick})")
+                    # enviar a agente a mensagem de novo tick
+                    await self.send_message_to_agent(phase, tick)
+
                 
                 # Mudança de fase (FASE DE AÇÃO)
                 elif msg_type == "phase_change":
@@ -98,19 +127,22 @@ class SimpleTestAgent(Agent):
                     print(f"[{self.agent.name}]  Fase: {phase.upper()}")
                     print(f"[{self.agent.name}]  Executando ação... (aguardando 1 segundo)")
                     print(f"{'─'*60}")
-                    
-                    # Aguardar 1 segundo (simular ação)
-                    await asyncio.sleep(80)
-                    
-                    print(f"[{self.agent.name}]  Ação concluída!")
-                    
-                    # Confirmar fase de ação usando o mixin
-                    await self.confirm_action_phase(tick)
-                    print(f"[{self.agent.name}]   Confirmação de ação enviada (tick {tick})\n")
+
+                    await self.send_message_to_agent(phase, tick)
                 
                 # Confirmação de desregistro
                 elif msg_type == "unregister_confirm":
-                    print(f"[{self.agent.name}] ✓ DESREGISTRADO DO RELÓGIO")
+                    print(f"[{self.agent.name}] DESREGISTRADO DO RELÓGIO")
+
+        async def send_message_to_agent(self, phase, tick):
+            """
+            Envia mensagem ao agente com a fase e o tick.
+            """
+            msg = Message(to=self.agent.agent_jid)
+            msg.set_metadata("tick", str(tick))
+            msg.set_metadata("phase", phase)
+            await self.send(msg)
+            print(f"[{self.agent.name}] Mensagem enviada ao agente (fase: {phase}, tick: {tick})")
             
 
 

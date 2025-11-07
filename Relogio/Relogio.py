@@ -60,7 +60,9 @@ class ClockAgent(Agent):
         Para a simulação do relógio.
         """
         self.is_running = False
+        
         print(f"[{self.name}] Simulação parada no tick {self.current_tick}")
+        
 
     class RegistrationBehaviour(CyclicBehaviour):
         """
@@ -187,7 +189,7 @@ class ClockAgent(Agent):
                 # Verificar timeout
                 elapsed = asyncio.get_event_loop().time() - start_wait
                 if elapsed > timeout:
-                    await self.agent.print_error_confirmation_timeout('communication', elapsed, timeout, self.agent.registered_agents - self.agent.agents_communication_ready)
+                    await self.print_error_confirmation_timeout('communication', elapsed, timeout, self.agent.registered_agents - self.agent.agents_communication_ready)
                     
                     # PARAR A SIMULAÇÃO
                     self.agent.stop_simulation()
@@ -226,7 +228,7 @@ class ClockAgent(Agent):
                 # Verificar timeout
                 elapsed = asyncio.get_event_loop().time() - start_wait
                 if elapsed > timeout:
-                    await self.agent.print_error_confirmation_timeout('action', elapsed, timeout, self.agent.registered_agents - self.agent.agents_action_ready)
+                    await self.print_error_confirmation_timeout('action', elapsed, timeout, self.agent.registered_agents - self.agent.agents_action_ready)
                     
                     # PARAR A SIMULAÇÃO
                     self.agent.stop_simulation()
@@ -265,30 +267,3 @@ class ClockAgent(Agent):
             for agent_jid in missing:
                 print(f"   - {agent_jid}")
             print(f"{'='*70}\n")
-
-
-async def main():
-    """
-    Exemplo de como usar o ClockAgent com 2 fases.
-    """
-    clock = ClockAgent("clock@localhost", "password", tick_duration_seconds=1.0, communication_ratio=0.5)
-    await clock.start()
-    
-    # Aguardar setup
-    await asyncio.sleep(2)
-    
-    # Iniciar simulação
-    clock.start_simulation()
-    
-    # Simular por 10 segundos
-    await asyncio.sleep(10)
-    
-    # Parar simulação
-    clock.stop_simulation()
-    
-    await clock.stop()
-
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())

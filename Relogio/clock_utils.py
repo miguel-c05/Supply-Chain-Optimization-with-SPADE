@@ -25,11 +25,12 @@ async def register_with_clock(agent, clock_jid: str):
     msg = Message(to=clock_jid)
     msg.metadata = {"type": "register"}
     msg.body = json.dumps({
-        "agent_name": agent.name,
-        "jid": str(agent.jid)
+        "agent_name": agent.agent.name,
+        "jid": str(agent.agent.jid)
     })
+    print(f'{agent.agent.name} -> {clock_jid}')
     await agent.send(msg)
-    print(f"[{agent.name}] Enviado pedido de registro ao relógio {clock_jid}")
+    print(f"[{agent.agent.name}] Enviado pedido de registro ao relógio {clock_jid}")
 
 
 async def unregister_from_clock(agent, clock_jid: str):
@@ -48,11 +49,11 @@ async def unregister_from_clock(agent, clock_jid: str):
     msg = Message(to=clock_jid)
     msg.metadata = {"type": "unregister"}
     msg.body = json.dumps({
-        "agent_name": agent.name,
-        "jid": str(agent.jid)
+        "agent_name": agent.agent.name,
+        "jid": str(agent.agent.jid)
     })
     await agent.send(msg)
-    print(f"[{agent.name}] Enviado pedido de desregistro ao relógio {clock_jid}")
+    print(f"[{agent.agent.name}] Enviado pedido de desregistro ao relógio {clock_jid}")
 
 
 async def confirm_communication_phase(agent, clock_jid: str, tick: int, additional_data: dict = None):
@@ -74,7 +75,7 @@ async def confirm_communication_phase(agent, clock_jid: str, tick: int, addition
     """
     body_data = {
         "tick": tick,
-        "agent_name": agent.name,
+        "agent_name": agent.agent.name,
         "phase": "communication",
         "status": "ready"
     }
@@ -108,7 +109,7 @@ async def confirm_action_phase(agent, clock_jid: str, tick: int, action_taken: b
     """
     body_data = {
         "tick": tick,
-        "agent_name": agent.name,
+        "agent_name": agent.agent.name,
         "phase": "action",
         "action_taken": action_taken,
         "status": "ready"
@@ -308,16 +309,16 @@ class ClockSyncMixin:
     
     async def confirm_communication_phase(self, tick: int, additional_data: dict = None):
         """Confirma o processamento da fase de comunicação"""
-        await confirm_communication_phase(self, self.clock_jid, tick, additional_data)
+        await confirm_communication_phase(self, self.agent.clock_jid, tick, additional_data)
     
     async def confirm_action_phase(self, tick: int, action_taken: bool = False, additional_data: dict = None):
         """Confirma o processamento da fase de ação"""
-        await confirm_action_phase(self, self.clock_jid, tick, action_taken, additional_data)
+        await confirm_action_phase(self, self.agent.clock_jid, tick, action_taken, additional_data)
     
     async def confirm_tick(self, tick: int, additional_data: dict = None):
         """[DEPRECATED] Use confirm_communication_phase() e confirm_action_phase()"""
-        await confirm_tick(self, self.clock_jid, tick, additional_data)
-    
+        await confirm_tick(self, self.agent.clock_jid, tick, additional_data)
+
     def handle_clock_message(self, msg: Message) -> tuple:
         """
         Processa mensagens do relógio (2 FASES).
