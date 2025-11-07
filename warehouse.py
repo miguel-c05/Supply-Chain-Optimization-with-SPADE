@@ -162,7 +162,6 @@ class Warehouse(Agent):
                 # orders. pending_orders[jid] is a list of Message objects.
                 pending_orders : dict = self.agent.pending_orders
                 jid = str(msg.sender)
-                pending_orders[jid] : list[Message] = pending_orders[jid]
                 if jid not in pending_orders:
                     pending_orders[jid] = []
                 pending_orders[jid].append(msg)
