@@ -14,10 +14,9 @@ class ClockAgent(Agent):
     Cada tick só avança quando todos os agentes confirmam ambas as fases.
     """
 
-    def __init__(self, jid, password, tick_duration_seconds: float = 1.0, communication_ratio: float = 0.5):
+    def __init__(self, jid, password, tick_duration_seconds: float = 1.0):
         super().__init__(jid, password)
         self.tick_duration = tick_duration_seconds          # Duração total de cada tick
-        self.communication_ratio = communication_ratio      # % do tick para comunicação (0.0-1.0)
         self.current_tick = 0                               # Tick atual
         self.current_phase = None                           # 'communication' ou 'action'
         self.registered_agents = set()                      # JIDs dos agentes registrados
@@ -70,29 +69,15 @@ class ClockAgent(Agent):
         """
 
         async def run(self):
-            msg = await self.receive(timeout=1)
+            msg = await self.receive(timeout=0.1)
             if msg:
                 msg_type = msg.metadata.get("type") if msg.metadata else None
                 
                 if msg_type == "register":
                     self.agent.register_agent(str(msg.sender))
-                    # Enviar confirmação
-                    reply = msg.make_reply()
-                    reply.body = json.dumps({
-                        "status": "registered",
-                        "current_tick": self.agent.current_tick,
-                        "tick_duration": self.agent.tick_duration
-                    })
-                    reply.metadata = {"type": "register_confirm"}
-                    await self.send(reply)
                     
                 elif msg_type == "unregister":
                     self.agent.unregister_agent(str(msg.sender))
-                    # Enviar confirmação
-                    reply = msg.make_reply()
-                    reply.body = json.dumps({"status": "unregistered"})
-                    reply.metadata = {"type": "unregister_confirm"}
-                    await self.send(reply)
 
     class ClockBehaviour(CyclicBehaviour):
         """
@@ -150,10 +135,11 @@ class ClockAgent(Agent):
             Args:
                 phase: 'communication' ou 'action'
             """
-
+            print(f"\n{'='*60}")
             print(f"[{self.agent.name}] FASE: {phase.upper()}")
             print(f"[{self.agent.name}] Notificando {len(self.agent.registered_agents)} agentes...")
-            
+            print(f"{'='*60}\n")
+
             # Limpar confirmações da fase anterior
             if phase == 'communication':
                 self.agent.agents_communication_ready.clear()
@@ -197,7 +183,7 @@ class ClockAgent(Agent):
                     return
                 
                 # Receber mensagens de confirmação
-                msg = await self.receive(timeout=1)
+                msg = await self.receive(timeout=0.1)
                 if msg and msg.metadata and msg.metadata.get("type") == "communication_ready":
                     sender = str(msg.sender)
                     if sender in self.agent.registered_agents:
@@ -236,7 +222,7 @@ class ClockAgent(Agent):
                     return
                 
                 # Receber mensagens de confirmação
-                msg = await self.receive(timeout=1)
+                msg = await self.receive(timeout=0.1)
                 if msg and msg.metadata and msg.metadata.get("type") == "action_ready":
                     sender = str(msg.sender)
                     if sender in self.agent.registered_agents:

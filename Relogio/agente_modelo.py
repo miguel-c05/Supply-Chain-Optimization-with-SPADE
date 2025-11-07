@@ -6,22 +6,7 @@ from datetime import datetime
 from clock_utils import ClockSyncMixin
 import random
 import json
-
-
-class ClockRegistrationBehaviour(OneShotBehaviour, ClockSyncMixin):
-    """
-    OneShotBehaviour que registra o agente no relógio.
-    Este behaviour executa uma única vez e envia a mensagem de registro.
-    """
-    
-    async def run(self):
-        """
-        Envia mensagem de registro ao ClockAgent.
-        """
-        self.setup_clock_sync(self.agent.clock_jid)
-        await self.register_with_clock()
-        print(f"[{self.agent.name}] Enviada solicitação de registro ao relógio")
-
+from MiddleManAgent import MiddleManAgent
 
 class SimpleTestAgent(Agent):
     """
@@ -45,15 +30,12 @@ class SimpleTestAgent(Agent):
 
     async def setup(self):
         print(f"[{self.name}] Agente de teste inicializado")
-        
-        # Adicionar behaviour de registro (OneShotBehaviour)
-        self.add_behaviour(ClockRegistrationBehaviour())
-        
-        # Adicionar behaviour principal (CyclicBehaviour)
-        self.add_behaviour(self.ClockCommunicationBehaviour())
+        self.middleman = MiddleManAgent(f"middleman_{self.jid}", "password", self.clock_jid, self.jid)
+        await self.middleman.start()
+        self.add_behaviour(self.CommunicationPhaseBehaviour())
+        self.add_behaviour(self.ActionPhaseBehaviour())
 
-
-    class ClockCommunicationBehaviour(CyclicBehaviour, ClockSyncMixin):
+    class CommunicationPhaseBehaviour(CyclicBehaviour):
         """
         Comportamento que responde às mensagens do relógio.
         Usa handle_clock_message() do ClockSyncMixin para processar mensagens.
@@ -63,54 +45,52 @@ class SimpleTestAgent(Agent):
             msg = await self.receive(timeout=1)
             
             if msg:
-                # Usar o método do mixin para processar mensagens do relógio
-                msg_type, data = self.handle_clock_message(msg)
+                # Verificar se está na fase de comunicação OU se a mensagem é do middleman com phase "communication"
+                if msg.sender == str(self.agent.middleman.jid) and msg.metadata.get("phase") == "communication":
+                    self.agent.communication_phase = True
                 
-                # Confirmação de registro
-                if msg_type == "register_confirm":
-                    print(f"[{self.agent.name}] REGISTRADO NO RELÓGIO")
-                    print(f"[{self.agent.name}] Tick atual: {data.get('current_tick')}")
-                    print(f"[{self.agent.name}] Duração do tick: {data.get('tick_duration')}s\n")
-                    
-                
-                # Novo tick (FASE DE COMUNICAÇÃO)
-                elif msg_type == "new_tick":
-                    tick = data.get("tick")
-                    phase = data.get("phase")
-                    
-                    print(f"\n{'─'*60}")
-                    print(f"[{self.agent.name}]  NOVO TICK RECEBIDO: {tick}")
-                    print(f"[{self.agent.name}]  FASE: {phase.upper()}")
-                    print(f"{'─'*60}")
-                    
-                    # Confirmar fase de comunicação usando o mixin
-                    await self.confirm_communication_phase(tick)
-                    print(f"[{self.agent.name}] Confirmação de comunicação enviada (tick {tick})")
-                
-                # Mudança de fase (FASE DE AÇÃO)
-                elif msg_type == "phase_change":
-                    tick = data.get("tick")
-                    phase = data.get("phase")
-                    
-                    print(f"\n{'─'*60}")
-                    print(f"[{self.agent.name}]  FASE DE AÇÃO RECEBIDA")
-                    print(f"[{self.agent.name}]  Tick: {tick}")
-                    print(f"[{self.agent.name}]  Fase: {phase.upper()}")
-                    print(f"[{self.agent.name}]  Executando ação... (aguardando 1 segundo)")
-                    print(f"{'─'*60}")
-                    
-                    # Aguardar 1 segundo (simular ação)
-                    await asyncio.sleep(80)
-                    
-                    print(f"[{self.agent.name}]  Ação concluída!")
-                    
-                    # Confirmar fase de ação usando o mixin
-                    await self.confirm_action_phase(tick)
-                    print(f"[{self.agent.name}]   Confirmação de ação enviada (tick {tick})\n")
-                
-                # Confirmação de desregistro
-                elif msg_type == "unregister_confirm":
-                    print(f"[{self.agent.name}] ✓ DESREGISTRADO DO RELÓGIO")
+                if self.agent.communication_phase:
+                    tick = msg.metadata.get("tick")
+                    print(f"[{self.agent.name}]  Executar comnunicação")
+
+                    await asyncio.sleep(1)  # Simula o tempo de processamento da comunicação
+                    mensagem = Message(to=str(self.agent.middleman.jid))
+                    mensagem.metadata = {
+                        "phase": "communication",
+                        "tick": tick
+                    }
+                    await self.send(mensagem)
+                    # TODO: Alterar funçao com as logisticas
+                    self.agent.communication_phase = False
+
+
+    class ActionPhaseBehaviour(CyclicBehaviour):
+        """
+        Comportamento que responde às mensagens do relógio.
+        Usa handle_clock_message() do ClockSyncMixin para processar mensagens.
+        """
+
+        async def run(self):
+            msg = await self.receive(timeout=1)
+
+            if msg:
+                # Verificar se está na fase de ação OU se a mensagem é do middleman com phase "action"
+                if msg.sender == str(self.agent.middleman.jid) and msg.metadata.get("phase") == "action":
+                    self.agent.action_phase = True
+
+                if self.agent.action_phase:
+                    tick = msg.metadata.get("tick")
+                    print(f"[{self.agent.name}]  Executar ação")
+
+                    await asyncio.sleep(1)  # Simula o tempo de processamento da ação
+                    mensagem = Message(to=str(self.agent.middleman.jid))
+                    mensagem.metadata = {
+                        "phase": "action",
+                        "tick": tick
+                    }
+                    await self.send(mensagem)
+                    # TODO: Alterar funçao com as logisticas
+                    self.agent.action_phase = False
             
 
 
@@ -125,27 +105,18 @@ async def main():
     await clock.start()
     print("Relógio iniciado\n")
     
-    # Aguardar setup do relógio
-    await asyncio.sleep(0.1)
-    
     # Criar agente de teste
     test_agent = SimpleTestAgent("testagent@localhost", "password", "clock@localhost")
     test_agent2 = SimpleTestAgent("testagent2@localhost", "password", "clock@localhost")
 
     await test_agent2.start()
-    print("Agente de teste 2 iniciado\n")
     await test_agent.start()
-    print("Agente de teste iniciado\n")
-    
-    # Aguardar registro
-    await asyncio.sleep(0.1)
-    
-    # Iniciar simulação do relógio
+
     print("Iniciando simulação...\n")
     clock.start_simulation()
     
-    # Deixar rodar por 10 segundos (aprox. 5 ticks com duração de 2s cada)
-    await asyncio.sleep(100)
+    # Deixar rodar por 10 segundos
+    await asyncio.sleep(10)
     
     # Parar simulação
     print("\n Parando simulação...")
@@ -156,7 +127,9 @@ async def main():
     
     # Parar agentes
     await test_agent.stop()
+    await test_agent.middleman.stop()
     await test_agent2.stop()
+    await test_agent2.middleman.stop()
     await clock.stop()
     
     print("\n Teste concluído!")
