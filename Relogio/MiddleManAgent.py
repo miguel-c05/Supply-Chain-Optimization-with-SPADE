@@ -99,14 +99,14 @@ class MiddleManAgent(Agent):
                 elif msg_type == "new_tick":
                     tick = data.get("tick")
                     phase = data.get("phase")
-                    
+                    tick_duration = data.get("tick_duration")
                     print(f"\n{'─'*60}")
                     print(f"[{self.agent.name}]  NOVO TICK RECEBIDO: {tick}")
                     print(f"[{self.agent.name}]  FASE: {phase.upper()}")
                     
                     
                     # enviar a agente a mensagem de novo tick
-                    await self.send_message_to_agent('communication', tick)
+                    await self.send_message_to_agent('communication', tick, tick_duration)
                     print(f"{'─'*60}\n")
 
                 
@@ -114,26 +114,28 @@ class MiddleManAgent(Agent):
                 elif msg_type == "phase_change":
                     tick = data.get("tick")
                     phase = data.get("phase")
-                    
+                    tick_duration = data.get("tick_duration")
+
                     print(f"\n{'─'*60}")
                     print(f"[{self.agent.name}]  FASE DE AÇÃO RECEBIDA")
                     print(f"[{self.agent.name}]  Tick: {tick}")
                     print(f"[{self.agent.name}]  Fase: {phase.upper()}")
 
-                    await self.send_message_to_agent('action', tick)
+                    await self.send_message_to_agent('action', tick, tick_duration)
                     print(f"{'─'*60}\n")
 
                 # Confirmação de desregistro
                 elif msg_type == "unregister_confirm":
                     print(f"[{self.agent.name}] DESREGISTRADO DO RELÓGIO")
 
-        async def send_message_to_agent(self, phase, tick):
+        async def send_message_to_agent(self, phase, tick, tick_duration):
             """
             Envia mensagem ao agente com a fase e o tick.
             """
             msg = Message(to=self.agent.agent_jid)
             msg.set_metadata("tick", str(tick))
             msg.set_metadata("phase", phase)
+            msg.set_metadata("tick_duration", str(tick_duration))
             await self.send(msg)
-            print(f"[{self.agent.name}] Mensagem enviada ao {self.agent.agent_jid} (fase: {phase}, tick: {tick})")
-            
+            print(f"[{self.agent.name}] Mensagem enviada ao {self.agent.agent_jid} (fase: {phase}, tick: {tick}, tick_duration: {tick_duration})")
+

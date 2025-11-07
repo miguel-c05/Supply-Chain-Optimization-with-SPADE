@@ -51,7 +51,8 @@ class SimpleTestAgent(Agent):
                 
                 if self.agent.communication_phase:
                     tick = msg.metadata.get("tick")
-                    print(f"[{self.agent.name}]  Executar comnunicação")
+                    print(f"[{self.agent.name}]  Executar comunicação")
+                    print (f"tick duration: {msg.metadata.get('tick_duration')}")
 
                     await asyncio.sleep(1)  # Simula o tempo de processamento da comunicação
                     mensagem = Message(to=str(self.agent.middleman.jid))
@@ -81,6 +82,7 @@ class SimpleTestAgent(Agent):
                 if self.agent.action_phase:
                     tick = msg.metadata.get("tick")
                     print(f"[{self.agent.name}]  Executar ação")
+                    print (f"tick duration: {msg.metadata.get('tick_duration')}")
 
                     await asyncio.sleep(1)  # Simula o tempo de processamento da ação
                     mensagem = Message(to=str(self.agent.middleman.jid))
