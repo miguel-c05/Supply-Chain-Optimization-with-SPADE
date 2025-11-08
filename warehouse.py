@@ -196,9 +196,9 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
             contacts = list(agent.presence.contacts.keys())
             
-            # Get request_id before sending
-            request_id_for_template = agent.request_counter
+            # Increment counter BEFORE using it
             agent.request_counter += 1
+            request_id_for_template = agent.request_counter
             
             msg = None  # Will store the last sent message for current_buy_request
             for contact in contacts:
@@ -214,12 +214,15 @@ class Warehouse(Agent):
             # Store the last message (or could store all if needed)
             if msg:
                 agent.current_buy_request = msg
+                supplier_jid = str(msg.to)  # The supplier we're buying from
         
                 behav = agent.RecieveSupplierAcceptance(msg)
                 template = Template()
                 template.set_metadata("performative", "supplier-accept")
+                template.set_metadata("supplier_id", supplier_jid)
                 template.set_metadata("warehouse_id", str(agent.jid))
                 template.set_metadata("request_id", str(request_id_for_template))
+                
                 agent.add_behaviour(behav, template)
                 
                 await behav.join()
@@ -233,6 +236,7 @@ class Warehouse(Agent):
         async def run(self):
             self.agent : Warehouse
             
+            print(f"{self.agent.jid}> Waiting for supplier acceptance (request_id={self.request_id})...")
             # Para ja guardamos apenas uma das mensagens recebidas (n escolhemos)
             msg : Message = await self.receive(timeout=5)
             
@@ -318,7 +322,7 @@ class Warehouse(Agent):
                 behav = agent.RecieveSupplierAcceptance(msg)
                 template = Template()
                 template.set_metadata("performative", "supplier-accept")
-                template.set_metadata("store_id", str(agent.jid))
+                template.set_metadata("warehouse_id", str(agent.jid))
                 template.set_metadata("request_id", str(request_id))
                 agent.add_behaviour(behav, template)
 

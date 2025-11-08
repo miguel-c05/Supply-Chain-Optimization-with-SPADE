@@ -43,6 +43,9 @@ class Supplier(Agent):
             - values: total quantity supplied
     """
     
+    # ------------------------------------------
+    #          SUPPLIER <-> WAREHOUSE
+    # ------------------------------------------
     
     class ReceiveBuyRequest(CyclicBehaviour):
         async def run(self):
@@ -202,6 +205,8 @@ class Supplier(Agent):
         
         print("="*40)
 
+    # ------------------------------------------
+    
     def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
