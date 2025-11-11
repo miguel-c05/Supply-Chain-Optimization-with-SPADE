@@ -1,3 +1,6 @@
+import heapq
+
+
 class Node:
     def __init__(self, id, x=None, y=None):
         self.id = id
@@ -34,12 +37,12 @@ class Edge:
     def get_other_node(self, node):
         return self.node2 if node == self.node1 else self.node1
 
-    def calculate_fuel_consumption(self, fuel_efficiency=6.5, vehicle_weight=1500):
+    def calculate_fuel_consumption(self, fuel_efficiency=0.065, vehicle_weight=1500):
         """
         Calcula o consumo de combustível baseado na distância e no tráfego (weight).
         
         Args:
-            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/km)
+            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/100km ou 0.065 L/km)
             vehicle_weight: peso do veículo em kg (padrão: 1500 kg)
         
         Returns:
@@ -68,7 +71,7 @@ class Edge:
     
     def get_fuel_consumption(self):
         """Retorna o consumo de combustível da aresta"""
-        return round(self.fuel_consumption, 2)
+        return round(self.fuel_consumption, 3)
 
 
 class Graph:
@@ -111,12 +114,12 @@ class Graph:
         node = self.get_node(node_id)
         return node.neighbors if node else []
     
-    def calculate_all_fuel_consumption(self, fuel_efficiency=6.5):
+    def calculate_all_fuel_consumption(self, fuel_efficiency=0.065):
         """
         Calcula o consumo de combustível para todas as arestas.
         
         Args:
-            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/km)
+            fuel_efficiency: consumo base em litros por km (padrão: 6.5 L/100km ou 0.065 L/km)
 
         Returns:
             dict: mapeamento de aresta -> consumo de combustível
@@ -164,3 +167,66 @@ class Graph:
                 node.id = new_id
                 new_nodes[new_id] = node
         self.nodes = new_nodes
+
+
+    def djikstra(self, start_node_id, target_node_id):
+        start_node = self.get_node(start_node_id)
+        target_node = self.get_node(target_node_id)
+
+        if not start_node or not target_node:
+            return None, 0.0
+
+        # Min-heap priority queue (usa weight como critério primário, fuel como desempate)
+        queue = [(0, 0, start_node)]  # (weight_acumulado, fuel_acumulado, node)
+        distances = {node: float('inf') for node in self.nodes.values()}
+        fuel_consumed = {node: float('inf') for node in self.nodes.values()}
+        distances[start_node] = 0
+        fuel_consumed[start_node] = 0
+        previous_nodes = {node: None for node in self.nodes.values()}
+
+        while queue:
+            current_distance, current_fuel, current_node = heapq.heappop(queue)
+
+            # Se já encontramos um caminho melhor, ignora
+            if current_distance > distances[current_node]:
+                continue
+            if current_distance == distances[current_node] and current_fuel > fuel_consumed[current_node]:
+                continue
+
+            for neighbor in current_node.neighbors:
+                edge = self.get_edge(current_node.id, neighbor.id)
+                if edge:
+                    # Calcula weight e fuel desta aresta
+                    weight = edge.weight if edge.weight is not None else 1
+                    edge.calculate_fuel_consumption()
+                    fuel = edge.fuel_consumption
+                    
+                    new_distance = current_distance + weight
+                    new_fuel = current_fuel + fuel
+
+                    # Atualiza se encontrou caminho melhor (menor weight, ou mesmo weight com menor fuel)
+                    if (new_distance < distances[neighbor] or 
+                        (new_distance == distances[neighbor] and new_fuel < fuel_consumed[neighbor])):
+                        distances[neighbor] = new_distance
+                        fuel_consumed[neighbor] = new_fuel
+                        previous_nodes[neighbor] = current_node
+                        heapq.heappush(queue, (new_distance, new_fuel, neighbor))
+
+        # Reconstruct path
+        path = []
+        current = target_node
+        while current:
+            path.append(current)
+            current = previous_nodes[current]
+        path.reverse()
+
+        # Calculate total fuel consumption along the path
+        total_fuel = 0.0
+        for i in range(len(path) - 1):
+            edge = self.get_edge(path[i].id, path[i + 1].id)
+            if edge:
+                # Ensure fuel consumption is calculated
+                edge.calculate_fuel_consumption()
+                total_fuel += edge.fuel_consumption
+
+        return path, round(total_fuel, 3) 

@@ -1,6 +1,8 @@
 from world.world import World
 
 w = World(
+    width=7,
+    height=7,
     mode="uniform", 
     max_cost=5, 
     seed=None, 
@@ -18,4 +20,8 @@ w = World(
 for i in range(1, 11):
     w.tick()
     print(f"Tick {i} completed.")
+    w.plot_graph()
+    start, target = input("Enter start and target node IDs: ").split(" ")
+    path, fuel = w.graph.djikstra(int(start), int(target))
+    print(f"Path: {path[0].id} --> {'-->'.join(str(node.id) for node in path[1:])} \nFuel needed: {fuel} liters")
     w.plot_graph()

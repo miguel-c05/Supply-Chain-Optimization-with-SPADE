@@ -3,7 +3,6 @@ import random
 import numpy as np
 import config as cfg
 from world.graph import Graph
-from math import ceil
 
 
 class World:
@@ -61,7 +60,7 @@ class World:
             self._add_highway_edge()
 
         # Calcula o consumo de combustível de todas as arestas
-        self.graph.calculate_all_fuel_consumption(fuel_efficiency=6.5)
+        self.graph.calculate_all_fuel_consumption()
 
         self.graph.infected_edges = []  # Lista para rastrear arestas infectadas
         self.traffic_probability = traffic_probability
@@ -82,7 +81,7 @@ class World:
                 # Obtém os objetos Node a partir dos IDs
                 u = self.graph.get_node(u_id)
                 v = self.graph.get_node(v_id)
-                self.graph.add_edge(u, v, weight=ceil(manhattan_dist/2), distance=manhattan_dist*self.min_distance*1.05)  # Aresta de alta capacidade com peso 1
+                self.graph.add_edge(u, v, weight=manhattan_dist//2, distance=manhattan_dist*self.min_distance)  # Aresta de alta capacidade com peso 1
                 break
 
     def _manhattan_distance(self, node1_id, node2_id):
@@ -279,7 +278,7 @@ class World:
             edge.weight = min(self.traffic_matrix[u][v], self.max_cost)
             
             # Recalcula o consumo de combustível da aresta
-            edge.calculate_fuel_consumption(fuel_efficiency=6.5)
+            edge.calculate_fuel_consumption()
             
             # Adiciona aresta à lista de infected_edges
             edge_key = (u, v)
@@ -320,7 +319,7 @@ class World:
                     graph_edge.weight = min(self.traffic_matrix[u][v], self.max_cost)
                     
                     # Recalcula o consumo de combustível da aresta
-                    graph_edge.calculate_fuel_consumption(fuel_efficiency=6.5)
+                    graph_edge.calculate_fuel_consumption()
                     
                     # Adiciona aresta à lista de infected_edges
                     if graph_edge_key not in self.graph.infected_edges:
@@ -343,7 +342,7 @@ class World:
                     self.traffic_matrix[u][v] = edge.initial_weight
                     
                     # Recalcula o consumo de combustível da aresta restaurada
-                    edge.calculate_fuel_consumption(fuel_efficiency=6.5)
+                    edge.calculate_fuel_consumption()
                     
                     edges_to_remove.append(edge_key)
                     print(f"Edge ({u}, {v}) restored to initial weight: {edge.initial_weight}")
