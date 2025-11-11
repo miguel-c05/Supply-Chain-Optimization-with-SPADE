@@ -26,8 +26,6 @@ class SimpleTestAgent(Agent):
         self.communication_phase = False
         self.action_phase = False
 
-        # Configurar sincronização com o relógio
-
     async def setup(self):
         print(f"[{self.name}] Agente de teste inicializado")
         self.middleman = MiddleManAgent(f"middleman_{self.jid}", "password", self.clock_jid, self.jid)
