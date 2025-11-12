@@ -1,5 +1,6 @@
 import asyncio
 import random
+import queue
 import spade
 from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
@@ -48,6 +49,9 @@ class Warehouse(Agent):
             - values: list() of spade.message.Message (confirmed "store-confirm" messages)
     """
     
+    # ------------------------------------------
+    #           WAREHOUSE <-> STORE
+    # ------------------------------------------
     
     class ReceiveBuyRequest(CyclicBehaviour):
         async def run(self):
@@ -178,14 +182,10 @@ class Warehouse(Agent):
                 
                 self.agent.print_stock()
             
-            
-                
-            
-            
-    class AssignVehicle(OneShotBehaviour):
-        async def run(self):
-            pass
     
+    # ------------------------------------------
+    #         WAREHOUSE <-> SUPPLIER
+    # ------------------------------------------      
     class BuyMaterial(OneShotBehaviour):
         def __init__(self, quantity, product):
             super().__init__()
@@ -193,15 +193,153 @@ class Warehouse(Agent):
             self.product = product
         
         async def run(self):
-            pass # TODO - implement Suppliers and complete func
+            agent : Warehouse = self.agent
+            contacts = list(agent.presence.contacts.keys())
+            
+            # Increment counter BEFORE using it
+            agent.request_counter += 1
+            request_id_for_template = agent.request_counter
+            
+            msg = None  # Will store the last sent message for current_buy_request
+            for contact in contacts:
+                msg = Message(to=contact)
+                agent.set_buy_metadata(msg)
+                msg.body = f"{self.quantity} {self.product}"
+                
+                print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
+                      f"\"{msg.body}\" to {msg.to}")
+                
+                await self.send(msg)
+            
+            # Store the last message (or could store all if needed)
+            if msg:
+                agent.current_buy_request = msg
+                supplier_jid = str(msg.to)  # The supplier we're buying from
         
-    class CommunicationPhase(OneShotBehaviour):
+                behav = agent.RecieveSupplierAcceptance(msg)
+                template = Template()
+                template.set_metadata("performative", "supplier-accept")
+                template.set_metadata("supplier_id", supplier_jid)
+                template.set_metadata("warehouse_id", str(agent.jid))
+                template.set_metadata("request_id", str(request_id_for_template))
+                
+                agent.add_behaviour(behav, template)
+                
+                await behav.join()
+            
+    class RecieveSupplierAcceptance(OneShotBehaviour):
+        def __init__(self, msg : Message):
+            super().__init__()
+            self.request_id = msg.get_metadata("request_id")
+            self.buy_msg = msg.body
+            
+        async def run(self):
+            self.agent : Warehouse
+            
+            print(f"{self.agent.jid}> Waiting for supplier acceptance (request_id={self.request_id})...")
+            # Para ja guardamos apenas uma das mensagens recebidas (n escolhemos)
+            msg : Message = await self.receive(timeout=5)
+            
+            if msg != None:
+                rec_id = msg.get_metadata("request_id")
+                rec = msg.body.split(" ")
+                quantity = int(rec[0])
+                product = rec[1]
+                
+                print(
+                    f"{self.agent.jid}> Recieved acceptance from {msg.sender}: "
+                    f"id={rec_id} "
+                    f"quant={quantity} "
+                    f"product={product}"
+                )
+                
+                behav = self.agent.SendWarehouseConfirmation(msg)
+                self.agent.add_behaviour(behav)
+                
+                await behav.join()
+            
+            else:
+                print(f"{self.agent.jid}> No acceptance gotten. Request \"{self.buy_msg}\" "
+                      f"saved in self.failed_requests")
+                
+                # Actually add the failed request to the queue
+                agent : Warehouse = self.agent
+                failed_msg = Message(to=agent.current_buy_request.to)
+                agent.set_buy_metadata(failed_msg)
+                failed_msg.set_metadata("request_id", str(self.request_id))
+                failed_msg.body = self.buy_msg
+                agent.failed_requests.put(failed_msg)
+                
+    class SendWarehouseConfirmation(OneShotBehaviour):
+        def __init__(self, msg : Message):
+            super().__init__()
+            self.dest = msg.sender
+            self.request_id = msg.get_metadata("request_id")
+            parts = msg.body.split(" ")
+            self.quantity = int(parts[0])
+            self.product = parts[1]
+            
+        
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            if self.product in agent.stock:
+                agent.stock[self.product] += self.quantity
+            else:
+                agent.stock[self.product] = self.quantity           
+            
+            msg = Message(to=self.dest)
+            msg.set_metadata("performative", "warehouse-confirm")
+            msg.set_metadata("supplier_id", str(self.dest))
+            msg.set_metadata("warehouse_id", str(agent.jid))
+            msg.set_metadata("request_id", str(self.request_id))
+            msg.body = f"{self.quantity} {self.product}"
+            
+            await self.send(msg)
+            
+            print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
+    
+    class RetryPreviousBuy(OneShotBehaviour):
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            if not agent.failed_requests.empty():
+                request : Message = agent.failed_requests.get()
+                request_id = request.get_metadata("request_id")
+                contacts = list(agent.presence.contacts.keys())
+                
+                for contact in contacts:
+                    msg : Message = Message(to=contact)
+                    agent.set_buy_metadata(msg)
+                    msg.set_metadata("request_id", str(request_id))
+                    msg.body = request.body
+
+                    print(f"{agent.jid}> Retrying request (id={request_id}):"
+                          f"\"{msg.body}\" to {msg.to}")
+
+                    await self.send(msg)
+
+                behav = agent.RecieveSupplierAcceptance(msg)
+                template = Template()
+                template.set_metadata("performative", "supplier-accept")
+                template.set_metadata("warehouse_id", str(agent.jid))
+                template.set_metadata("request_id", str(request_id))
+                agent.add_behaviour(behav, template)
+
+                await behav.join()
+            
+    class AssignVehicle(OneShotBehaviour):
         async def run(self):
             pass
     
-    class ActionPhase(OneShotBehaviour):
-        async def run(self):
-            pass
+    
+    # ------------------------------------------
+    #           AUXILARY FUNCTIONS
+    # ------------------------------------------
+    def set_buy_metadata(self, msg : Message):
+        msg.set_metadata("performative", "warehouse-buy")
+        msg.set_metadata("warehouse_id", str(self.jid))
+        msg.set_metadata("request_id", str(self.request_counter))
     
     def print_stock(self):
         print("="*30)
@@ -218,6 +356,23 @@ class Warehouse(Agent):
         
         print("="*30)
 
+    # ------------------------------------------
+    #               CLOCK PHASES
+    # ------------------------------------------
+        
+    class CommunicationPhase(OneShotBehaviour):
+        async def run(self):
+            pass
+    
+    class ActionPhase(OneShotBehaviour):
+        async def run(self):
+            pass
+    
+    # ------------------------------------------
+    
+    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+        super().__init__(jid, password, port, verify_security)
+        self.node_id = node_id
     
     async def setup(self):
         self.stock = {"A" : random.randint(0,20),
@@ -242,6 +397,9 @@ class Warehouse(Agent):
             )
         """
         self.pending_orders = {}
+        self.request_counter = 0
+        self.current_buy_request : Message = None
+        self.failed_requests : queue.Queue = queue.Queue()
         
         behav = self.ReceiveBuyRequest()
         template = Template()
@@ -256,7 +414,7 @@ class Warehouse(Agent):
 """
 async def main():
     # Tente com diferentes credenciais
-    ware_agent = Warehouse("warehouse@localhost", "password")
+    ware_agent = Warehouse("warehouse@localhost", "password",1)
     
     try:
         await ware_agent.start(auto_register=True)

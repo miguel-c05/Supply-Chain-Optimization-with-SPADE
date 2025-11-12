@@ -34,6 +34,10 @@ class Store(Agent):
         Messages. A request is enqueued if ReceiveAcceptance times out.
     """
     
+    # ------------------------------------------
+    #         WAREHOUSE <-> STORE
+    # ------------------------------------------
+    
     class BuyProduct(OneShotBehaviour):
         def __init__(self, quantity : int, product : str):
             super().__init__()
@@ -66,7 +70,7 @@ class Store(Agent):
             if msg:
                 agent.current_buy_request = msg
         
-                behav = agent.RecieveAcceptance(msg)
+                behav = agent.RecieveWarehouseAcceptance(msg)
                 template = Template()
                 template.set_metadata("performative", "warehouse-accept")
                 template.set_metadata("store_id", str(agent.jid))
@@ -75,7 +79,7 @@ class Store(Agent):
                 
                 await behav.join()
 
-    class RecieveAcceptance(OneShotBehaviour):
+    class RecieveWarehouseAcceptance(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
             self.request_id = msg.get_metadata("request_id")
@@ -100,7 +104,7 @@ class Store(Agent):
                     f"product={product}"
                 )
                 
-                behav = self.agent.SendConfirmation(msg)
+                behav = self.agent.SendStoreConfirmation(msg)
                 self.agent.add_behaviour(behav)
                 
                 await behav.join()
@@ -117,7 +121,7 @@ class Store(Agent):
                 failed_msg.body = self.buy_msg
                 agent.failed_requests.put(failed_msg)
     
-    class SendConfirmation(OneShotBehaviour):
+    class SendStoreConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
             self.dest = msg.sender
@@ -166,7 +170,7 @@ class Store(Agent):
 
                     await self.send(msg)
 
-                behav = agent.RecieveAcceptance(msg)
+                behav = agent.RecieveWarehouseAcceptance(msg)
                 template = Template()
                 template.set_metadata("performative", "warehouse-accept")
                 template.set_metadata("store_id", str(agent.jid))
@@ -174,13 +178,22 @@ class Store(Agent):
                 agent.add_behaviour(behav, template)
 
                 await behav.join()
-                
+    
+    # ------------------------------------------
+    #               CLOCK PHASES
+    # ------------------------------------------         
             
     class CommunicationPhase(OneShotBehaviour):
         async def run(self):
             agent : Store = self.agent
             
-        
+            """
+            In the communication phase, a Store will:
+            - Draw from self.communication_queue and execute that behaviour
+            
+            The communication_queue will encompass the following behaviours:
+            - ReceiveOrder
+            """
         
             
             template = Template()
@@ -192,18 +205,34 @@ class Store(Agent):
         async def run(self):
             agent : Store = self.agent
             
+            """
+            In the action phase, a Store will:
+            - Draw from self.action_queue and execute that behaviour
             
+            The action_queue will encompass the following behaviours:
+            - BuyProduct
+            """
             
             end_msg = await self.receive(timeout=40)
             
             template = Template()
             # TODO - introduzir metadata de "end communication"
             behav = agent.CommunicationPhase()
-        
+    
+    # ------------------------------------------
+    #           AUXILARY FUNCTIONS
+    # ------------------------------------------
+      
     def set_buy_metadata(self, msg : Message):
         msg.set_metadata("performative", "store-buy")
         msg.set_metadata("store_id", str(self.jid))
         # Note: request_id should be set separately by the caller
+    
+    # ------------------------------------------
+    
+    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+        super().__init__(jid, password, port, verify_security)
+        self.node_id = node_id
     
     async def setup(self):
         self.stock = {}
@@ -213,6 +242,9 @@ class Store(Agent):
         
         self.communication_queue : queue.Queue = queue.Queue()
         self.action_queue : queue.Queue = queue.Queue()
+        
+        behav = self.CommunicationPhase()
+        self.add_behaviour(behav)
 
 
 async def main():

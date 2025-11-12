@@ -1,5 +1,5 @@
 import os
 
-BASE_DIR =  "C:\\Users\\diogo\\OneDrive\\Documents\\GitHub\\Supply-Chain-Optimization-with-SPADE"
+BASE_DIR =  os.getcwd()
 
 SEED_DIR = os.path.join(BASE_DIR, "seeds")
