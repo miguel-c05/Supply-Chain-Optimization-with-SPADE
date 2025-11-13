@@ -208,3 +208,4 @@ __marimo__/
 
 # Spade Server
 server.db
+seeds/*.npy
