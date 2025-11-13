@@ -1,255 +1,182 @@
+"""
+Módulo ClockAgent - Sistema de Relógio para Simulação Multi-Agente
+
+Este módulo implementa um agente relógio (ClockAgent) baseado em SPADE que coordena
+a simulação através de um sistema de ticks temporais. O relógio envia periodicamente
+informações de sincronização para todos os agentes registrados no sistema.
+
+Classes:
+    ClockAgent: Agente principal que gerencia o sistema de ticks da simulação.
+    
+Exemplo de uso:
+    ```python
+    from Relogio import ClockAgent
+    
+    # Criar agente relógio
+    clock = ClockAgent(
+        jid="clock@localhost",
+        password="password",
+        tick_duration_seconds=1.0,
+        veiculos_ids=["veiculo1@localhost", "veiculo2@localhost"]
+    )
+    
+    # Iniciar agente
+    await clock.start()
+    
+    # Iniciar simulação
+    clock.start_simulation()
+    ```
+
+Autor: Supply Chain Optimization Project
+Data: 2025
+"""
+
 from spade.agent import Agent
-from spade.behaviour import CyclicBehaviour
+from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
 from spade.message import Message
 import asyncio
 import json
 from datetime import datetime
 
+
 class ClockAgent(Agent):
     """
-    Agente relógio que coordena a simulação por ticks com 2 fases:
-    FASE 1 - COMUNICAÇÃO: Agentes enviam e recebem mensagens entre si
-    FASE 2 - AÇÃO: Agentes processam mensagens e executam ações
+    Agente Relógio para coordenação temporal de simulações multi-agente.
     
-    Cada tick só avança quando todos os agentes confirmam ambas as fases.
+    Este agente funciona como um coordenador central que envia periodicamente
+    informações de tick (pulsos temporais) para todos os agentes registrados,
+    permitindo sincronização e controle do tempo de simulação.
+    
+    Attributes:
+        tick_duration (float): Duração em segundos que cada tick representa na simulação.
+        current_tick (int): Número do tick atual da simulação.
+        veiculos_ids (list): Lista de JIDs dos veículos a registrar automaticamente.
+        registered_agents (set): Conjunto de JIDs dos agentes registrados.
+        is_running (bool): Flag indicando se a simulação está ativa.
+        
+    Note:
+        O agente deve ter `is_running` e `registered_agents` definidos antes de iniciar.
     """
 
-    def __init__(self, jid, password, tick_duration_seconds: float = 1.0):
+    def __init__(self, jid, password, tick_duration_seconds: float = 1.0, veiculos_ids: list = []):
+        """
+        Inicializa o agente relógio.
+        
+        Args:
+            jid (str): Jabber ID do agente (ex: "clock@localhost").
+            password (str): Senha para autenticação XMPP.
+            tick_duration_seconds (float, optional): Duração que cada tick representa 
+                na simulação em segundos. Defaults to 1.0.
+            veiculos_ids (list, optional): Lista de JIDs dos veículos a registrar 
+                automaticamente no setup. Defaults to [].
+                
+        Example:
+            ```python
+            clock = ClockAgent(
+                jid="clock@localhost",
+                password="secret",
+                tick_duration_seconds=2.0,
+                veiculos_ids=["vehicle1@localhost"]
+            )
+            ```
+        """
         super().__init__(jid, password)
         self.tick_duration = tick_duration_seconds          # Duração total de cada tick
         self.current_tick = 0                               # Tick atual
-        self.current_phase = None                           # 'communication' ou 'action'
-        self.registered_agents = set()                      # JIDs dos agentes registrados
-        self.agents_communication_ready = set()             # Agentes que confirmaram fase de comunicação
-        self.agents_action_ready = set()                    # Agentes que confirmaram fase de ação
-        self.is_running = False                             # Flag de simulação ativa
-        self.start_time = None                              # Timestamp de início
+        self.veiculos_ids = veiculos_ids                    # IDs dos veículos
+
+    class TickBroadcastBehaviour(PeriodicBehaviour):
+        """
+        Comportamento periódico para broadcast de informações de tick.
         
-    async def setup(self):
-        print(f"[{self.name}] Relógio inicializado. Tick duration: {self.tick_duration}s")
-        self.add_behaviour(self.ClockBehaviour())
-        self.add_behaviour(self.RegistrationBehaviour())
-
-    def register_agent(self, agent_jid: str):
-        """
-        Registra um agente para receber notificações de tick.
-        """
-        self.registered_agents.add(agent_jid)
-        print(f"[{self.name}] Agente registrado: {agent_jid}. Total: {len(self.registered_agents)}")
-
-    def unregister_agent(self, agent_jid: str):
-        """
-        Remove um agente da lista de notificações.
-        """
-        if agent_jid in self.registered_agents:
-            self.registered_agents.remove(agent_jid)
-            print(f"[{self.name}] Agente removido: {agent_jid}. Total: {len(self.registered_agents)}")
-
-    def start_simulation(self):
-        """
-        Inicia a simulação do relógio.
-        """
-        self.is_running = True
-        self.current_tick = 0
-        self.start_time = datetime.now()
-        print(f"[{self.name}] Simulação iniciada no tick {self.current_tick}")
-
-    def stop_simulation(self):
-        """
-        Para a simulação do relógio.
-        """
-        self.is_running = False
+        Este comportamento é executado a cada 5 segundos e envia informações
+        do tick atual para todos os agentes registrados no sistema de simulação.
         
-        print(f"[{self.name}] Simulação parada no tick {self.current_tick}")
+        Attributes:
+            period (float): Período de execução em segundos.
+            
+        Note:
+            Apenas executa quando `self.agent.is_running` está ativo.
+            Incrementa automaticamente `self.agent.current_tick` a cada execução.
+        """
         
-
-    class RegistrationBehaviour(CyclicBehaviour):
-        """
-        Comportamento que escuta pedidos de registro/desregistro de agentes.
-        """
-
         async def run(self):
-            msg = await self.receive(timeout=0.1)
-            if msg:
-                msg_type = msg.metadata.get("type") if msg.metadata else None
-                
-                if msg_type == "register":
-                    self.agent.register_agent(str(msg.sender))
-                    
-                elif msg_type == "unregister":
-                    self.agent.unregister_agent(str(msg.sender))
-
-    class ClockBehaviour(CyclicBehaviour):
-        """
-        Comportamento principal do relógio com 2 FASES por tick:
-        
-        FASE 1 - COMUNICAÇÃO:
-        1. Envia "new_tick" + "phase: communication" para todos
-        2. Aguarda "communication_ready" de todos
-        
-        FASE 2 - AÇÃO:
-        3. Envia "phase_change" + "phase: action" para todos
-        4. Aguarda "action_ready" de todos
-        5. Avança para próximo tick
-        """
-
-        async def run(self):
-            # Só executa se a simulação estiver ativa
+            """
+            Executa o broadcast de tick para todos os agentes registrados.
+            
+            Este método é chamado periodicamente (a cada 5 segundos) e realiza:
+            1. Verifica se a simulação está ativa
+            2. Incrementa o contador de ticks
+            3. Prepara mensagem com informações do tick
+            4. Envia para todos os agentes registrados
+            
+            Formato da mensagem enviada:
+                ```json
+                {
+                    "type": "tick",
+                    "tick_number": 123,
+                    "tick_duration": 1.0,
+                    "timestamp": "2025-11-12T10:30:00.123456"
+                }
+                ```
+            
+            Returns:
+                None: Retorna imediatamente se a simulação não estiver ativa.
+            """
+            # Só envia se a simulação estiver ativa
             if not self.agent.is_running:
-                await asyncio.sleep(0.5)
                 return
-
-            # Se não há agentes registrados, aguarda
-            if not self.agent.registered_agents:
-                print(f"[{self.agent.name}] Aguardando agentes se registrarem...")
-                await asyncio.sleep(2)
-                return
-
-            print(f"\n{'='*70}")
-            print(f"[{self.agent.name}] TICK {self.agent.current_tick}")
-            print(f"{'='*70}\n")
-
-            # ========================================
-            # FASE 1: COMUNICAÇÃO
-            # ========================================
-            self.agent.current_phase = 'communication'
-            await self.broadcast_phase_start('communication')
-            await self.wait_for_communication_confirmations()
-
-            # ========================================
-            # FASE 2: AÇÃO
-            # ========================================
-            self.agent.current_phase = 'action'
-            await self.broadcast_phase_start('action')
-            await self.wait_for_action_confirmations()
-
-            # ========================================
-            # Avançar para o próximo tick
-            # ========================================
+            
+            # Incrementa o tick
             self.agent.current_tick += 1
-
-        async def broadcast_phase_start(self, phase: str):
-            """
-            Envia mensagem de início de fase para todos os agentes.
             
-            Args:
-                phase: 'communication' ou 'action'
-            """
-            print(f"\n{'='*60}")
-            print(f"[{self.agent.name}] FASE: {phase.upper()}")
-            print(f"[{self.agent.name}] Notificando {len(self.agent.registered_agents)} agentes...")
-            print(f"{'='*60}\n")
-
-            # Limpar confirmações da fase anterior
-            if phase == 'communication':
-                self.agent.agents_communication_ready.clear()
-            else:
-                self.agent.agents_action_ready.clear()
+            print(f"[{self.agent.name}] Tick {self.agent.current_tick} - Broadcasting to {len(self.agent.registered_agents)} agents")
             
-            # Enviar mensagem para cada agente
-            for agent_jid in self.agent.registered_agents:
+            # Prepara a mensagem com informação do tick
+            tick_info = {
+                "type": "tick",
+                "tick_number": self.agent.current_tick,
+                "tick_duration": self.agent.tick_duration,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Envia para todos os agentes registrados
+            for agent_jid in self.agent.presence.get_contacts().keys():
                 msg = Message(to=agent_jid)
-                
-                if phase == 'communication':
-                    msg.metadata = {"type": "new_tick"}
-                else:  # action
-                    msg.metadata = {"type": "phase_change"}
-
-                msg.body = json.dumps({
-                        "tick": self.agent.current_tick,
-                        "phase": phase,
-                        "tick_duration": self.agent.tick_duration,
-                    })
+                msg.set_metadata("performative", "inform")
+                msg.set_metadata("ontology", "clock")
+                msg.body = json.dumps(tick_info)
                 
                 await self.send(msg)
-
-        async def wait_for_communication_confirmations(self):
-            """
-            Aguarda confirmação da FASE DE COMUNICAÇÃO de todos os agentes.
-            Se demorar mais de 1 minuto, para o sistema com erro.
-            """
-            timeout = 60  # Timeout de 1 minuto (60 segundos)
-            start_wait = asyncio.get_event_loop().time()
             
-            while len(self.agent.agents_communication_ready) < len(self.agent.registered_agents):
-                # Verificar timeout
-                elapsed = asyncio.get_event_loop().time() - start_wait
-                if elapsed > timeout:
-                    await self.print_error_confirmation_timeout('communication', elapsed, timeout, self.agent.registered_agents - self.agent.agents_communication_ready)
-                    
-                    # PARAR A SIMULAÇÃO
-                    self.agent.stop_simulation()
-                    print(f"[{self.agent.name}] Simulação PARADA devido a timeout!")
-                    return
-                
-                # Receber mensagens de confirmação
-                msg = await self.receive(timeout=0.1)
-                if msg and msg.metadata and msg.metadata.get("type") == "communication_ready":
-                    sender = str(msg.sender)
-                    if sender in self.agent.registered_agents:
-                        self.agent.agents_communication_ready.add(sender)
-                        
-                        try:
-                            body = json.loads(msg.body)
-                            confirmed_tick = body.get("tick", "?")
-                            print(f"[{self.agent.name}] Comunicação confirmada: {sender.split('@')[0]} (tick {confirmed_tick})")
-                        except:
-                            print(f"[{self.agent.name}] Comunicação confirmada: {sender.split('@')[0]}")
-                
-                await asyncio.sleep(0.1)
-            
-            ready_count = len(self.agent.agents_communication_ready)
-            total_count = len(self.agent.registered_agents)
-            print(f"[{self.agent.name}] Fase de comunicação: {ready_count}/{total_count} agentes prontos\n")
+            print(f"[{self.agent.name}] Tick {self.agent.current_tick} broadcast sent to all agents")
 
-        async def wait_for_action_confirmations(self):
+        async def on_start(self):
             """
-            Aguarda confirmação da FASE DE AÇÃO de todos os agentes.
-            Se demorar mais de 1 minuto, para o sistema com erro.
+            Callback executado quando o comportamento é iniciado.
+            
+            Imprime informação sobre o início do comportamento e o período
+            configurado para os broadcasts.
             """
-            timeout = 60  # Timeout de 1 minuto (60 segundos)
-            start_wait = asyncio.get_event_loop().time()
-            
-            while len(self.agent.agents_action_ready) < len(self.agent.registered_agents):
-                # Verificar timeout
-                elapsed = asyncio.get_event_loop().time() - start_wait
-                if elapsed > timeout:
-                    await self.print_error_confirmation_timeout('action', elapsed, timeout, self.agent.registered_agents - self.agent.agents_action_ready)
-                    
-                    # PARAR A SIMULAÇÃO
-                    self.agent.stop_simulation()
-                    print(f"[{self.agent.name}] Simulação PARADA devido a timeout!")
-                    return
-                
-                # Receber mensagens de confirmação
-                msg = await self.receive(timeout=0.1)
-                if msg and msg.metadata and msg.metadata.get("type") == "action_ready":
-                    sender = str(msg.sender)
-                    if sender in self.agent.registered_agents:
-                        self.agent.agents_action_ready.add(sender)
-                        
-                        try:
-                            body = json.loads(msg.body)
-                            confirmed_tick = body.get("tick", "?")
-                            action_taken = body.get("action_taken", False)
-                            print(f"[{self.agent.name}] Ação confirmada: {sender.split('@')[0]} (tick {confirmed_tick}, ação: {action_taken})")
-                        except:
-                            print(f"[{self.agent.name}] Ação confirmada: {sender.split('@')[0]}")
-                
-                await asyncio.sleep(0.1)
-            
-            ready_count = len(self.agent.agents_action_ready)
-            total_count = len(self.agent.registered_agents)
-            print(f"[{self.agent.name}] Fase de ação: {ready_count}/{total_count} agentes prontos")
-            print(f"[{self.agent.name}] TICK {self.agent.current_tick} COMPLETO\n")
+            print(f"[{self.agent.name}] TickBroadcastBehaviour iniciado - Broadcasting a cada {self.period} segundos")
 
-
-        async def print_error_confirmation_timeout(self, phase: str, elapsed: float, timeout: float, missing: set):
-            print(f"\n{'='*70}")
-            print(f"[{self.agent.name}] ERRO DE SISTEMA - TIMEOUT NA FASE DE {phase.upper()}")
-            print(f"{'='*70}")
-            print(f"[{self.agent.name}] Tempo decorrido: {elapsed:.2f}s (limite: {timeout}s)")
-            print(f"[{self.agent.name}] Agentes que NÃO confirmaram:")
-            for agent_jid in missing:
-                print(f"   - {agent_jid}")
-            print(f"{'='*70}\n")
+    async def setup(self):
+        """
+        Configura e inicializa o agente relógio.
+        
+        Este método é chamado automaticamente quando o agente é iniciado.
+        Realiza as seguintes configurações:
+        1. Aprova automaticamente todas as subscrições de presença
+        2. Adiciona o comportamento de broadcast de ticks (período de 5 segundos)
+        3. Registra todos os veículos especificados em `veiculos_ids`
+        
+        Nota:
+            Este método é assíncrono e executado pelo framework SPADE.
+            Não deve ser chamado diretamente pelo utilizador.
+        """
+        self.presence.approve_all = True
+        print(f"[{self.agent.name}] Relógio inicializado. Tick duration: {self.tick_duration}s")
+        self.add_behaviour(self.TickBroadcastBehaviour(period=5))
+        for veiculo_id in self.veiculos_ids:
+            self.presence.subscribe(veiculo_id)
+        

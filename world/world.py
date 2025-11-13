@@ -127,8 +127,8 @@ class World:
                     traffic_matrix[i][j] = 1
                     traffic_matrix[j][i] = 1
                 else:
-                    traffic_matrix[i][j] = random.randint(1, self.max_cost)
-                    traffic_matrix[j][i] = random.randint(1, self.max_cost)
+                    traffic_matrix[i][j] = round(float(random.uniform(1, self.max_cost)), 4)
+                    traffic_matrix[j][i] = round(float(random.uniform(1, self.max_cost)), 4)
 
         np.save(os.path.join(cfg.SEED_DIR, f"{self.seed}.npy"), (traffic_matrix, distances_matrix))
         return traffic_matrix, distances_matrix
@@ -137,6 +137,7 @@ class World:
         """Adiciona os custos da matriz como peso nas arestas"""
         for edge in self.graph.edges:
             u, v = edge.node1.id, edge.node2.id
+            print(f"Adding cost to edge ({u}, {v}): Distance = {self.distances_matrix[u][v]}, Initial Weight = {self.traffic_matrix[u][v]}")
             edge.weight = self.traffic_matrix[u][v]
             edge.initial_weight = self.traffic_matrix[u][v]
             edge.distance = self.distances_matrix[u][v]
@@ -273,7 +274,7 @@ class World:
         edges = random.sample(self.graph.edges, min(3, len(self.graph.edges)))
         for edge in edges:
             u, v = edge.node1.id, edge.node2.id
-            increase = random.randint(1, 5)
+            increase = round(random.uniform(1, 5), 4)
             self.traffic_matrix[u][v] += increase
             edge.weight = min(self.traffic_matrix[u][v], self.max_cost)
             
@@ -314,7 +315,7 @@ class World:
                 p = random.uniform(0, 1)
                 if p > self.traffic_spread_probability:
                     u, v = graph_edge.node1.id, graph_edge.node2.id
-                    increase = random.randint(1, 3)
+                    increase = round(random.uniform(1, (float(self.max_cost)/2)), 4)
                     self.traffic_matrix[u][v] += increase
                     graph_edge.weight = min(self.traffic_matrix[u][v], self.max_cost)
                     

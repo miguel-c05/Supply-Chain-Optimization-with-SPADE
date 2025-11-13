@@ -3,8 +3,8 @@ from world.world import World
 w = World(
     width=7,
     height=7,
-    mode="uniform", 
-    max_cost=5, 
+    mode="different", 
+    max_cost=4, 
     seed=None, 
     gas_stations=1, 
     warehouses=2,
@@ -22,6 +22,6 @@ for i in range(1, 11):
     print(f"Tick {i} completed.")
     w.plot_graph()
     start, target = input("Enter start and target node IDs: ").split(" ")
-    path, fuel = w.graph.djikstra(int(start), int(target))
-    print(f"Path: {path[0].id} --> {'-->'.join(str(node.id) for node in path[1:])} \nFuel needed: {fuel} liters")
+    path, fuel, time = w.graph.djikstra(int(start), int(target))
+    print(f"Path: {path[0].id} --> {'-->'.join(str(node.id) for node in path[1:])} \nFuel needed: {fuel} liters\nTime needed: {time} seconds")
     w.plot_graph()
