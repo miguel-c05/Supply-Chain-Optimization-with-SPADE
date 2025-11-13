@@ -6,6 +6,7 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
+from world.graph import Graph, Node
 
 class Supplier(Agent):
     
@@ -109,6 +110,7 @@ class Supplier(Agent):
             msg.set_metadata("performative", "supplier-accept")
             msg.set_metadata("supplier_id", str(agent.jid))
             msg.set_metadata("warehouse_id", str(self.sender))
+            msg.set_metadata("node_id", str(agent.node_id))
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quant} {self.product}"
             
@@ -207,9 +209,13 @@ class Supplier(Agent):
 
     # ------------------------------------------
     
-    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
+        self.map : Graph = map
+        node : Node = self.map.get_node(node_id)
+        self.pos_x = node.x
+        self.pos_y = node.y
     
     async def setup(self):
         # Supplier has infinite stock - no need to track stock levels

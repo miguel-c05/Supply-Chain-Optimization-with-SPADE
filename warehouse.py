@@ -6,6 +6,7 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
+from world.graph import Graph, Node
 
 class Warehouse(Agent):
     
@@ -88,7 +89,10 @@ class Warehouse(Agent):
                     
                     agent.add_behaviour(accept_behav)
                 else:
-                    print(f"{agent.jid}> Could not satisfy request.")
+                    # Reject the request - insufficient stock
+                    reject_behav = agent.RejectBuyRequest(msg, reason="insufficient_stock")
+                    agent.add_behaviour(reject_behav)
+                    print(f"{agent.jid}> Could not satisfy request. Rejection sent.")
             else:
                 print(f"{agent.jid}> Did not get any buy requests in 20 seconds.")
 
@@ -116,6 +120,7 @@ class Warehouse(Agent):
             msg.set_metadata("performative", "warehouse-accept")
             msg.set_metadata("warehouse_id", str(agent.jid))
             msg.set_metadata("store_id", str(self.sender))
+            msg.set_metadata("node_id", str(agent.node_id))
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quant} {self.product}"
             
@@ -133,6 +138,38 @@ class Warehouse(Agent):
             
             # Aguardar a confirmação ser recebida antes de terminar
             # await confirm_behav.join()
+    
+    class RejectBuyRequest(OneShotBehaviour):
+        def __init__(self, msg : Message, reason : str = "insufficient_stock"):
+            super().__init__()
+            self.request_id = int(msg.get_metadata("request_id"))
+            request = msg.body.split(" ")
+            self.quant = int(request[0])
+            self.product = request[1]
+            self.sender = msg.sender
+            self.reason = reason
+        
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            print(
+                f"{agent.jid}> Rejected request from {self.sender}: "
+                f"id={self.request_id} "
+                f"quant={self.quant} "
+                f"product={self.product} "
+                f"reason={self.reason}"
+            )
+            
+            msg = Message(to=self.sender)
+            msg.set_metadata("performative", "warehouse-reject")
+            msg.set_metadata("warehouse_id", str(agent.jid))
+            msg.set_metadata("store_id", str(self.sender))
+            msg.set_metadata("node_id", str(agent.node_id))
+            msg.set_metadata("request_id", str(self.request_id))
+            msg.body = f"{self.quant} {self.product} {self.reason}"
+            
+            await self.send(msg)
+            print(f"{agent.jid}> RejectBuyRequest sent to {self.sender}")
             
             
     class ReceiveConfirmation(OneShotBehaviour):
@@ -204,6 +241,7 @@ class Warehouse(Agent):
             for contact in contacts:
                 msg = Message(to=contact)
                 agent.set_buy_metadata(msg)
+                msg.set_metadata("node_id", str(agent.node_id))
                 msg.body = f"{self.quantity} {self.product}"
                 
                 print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
@@ -292,6 +330,7 @@ class Warehouse(Agent):
             msg.set_metadata("performative", "warehouse-confirm")
             msg.set_metadata("supplier_id", str(self.dest))
             msg.set_metadata("warehouse_id", str(agent.jid))
+            msg.set_metadata("node_id", str(agent.node_id))
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quantity} {self.product}"
             
@@ -370,9 +409,13 @@ class Warehouse(Agent):
     
     # ------------------------------------------
     
-    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
+        self.map : Graph = map
+        node : Node = self.map.get_node(node_id)
+        self.pos_x = node.x
+        self.pos_y = node.y
     
     async def setup(self):
         self.stock = {"A" : random.randint(0,20),
