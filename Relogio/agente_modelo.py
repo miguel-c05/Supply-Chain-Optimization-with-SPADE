@@ -37,7 +37,7 @@ class SimpleTestAgent(Agent):
         """
         Comportamento que responde às mensagens do relógio.
         Usa handle_clock_message() do ClockSyncMixin para processar mensagens.
-        """
+        ......"""
 
         async def run(self):
             msg = await self.receive(timeout=1)

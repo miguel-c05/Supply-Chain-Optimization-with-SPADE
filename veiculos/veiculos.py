@@ -7,6 +7,8 @@ from datetime import datetime
 #from clock_utils import ClockSyncMixin
 import random
 import json
+
+from veiculos.algoritmo_tarefas import A_star_task_algorithm
 #from MiddleManAgent import MiddleManAgent
 from ..world.graph import Graph
 
@@ -41,7 +43,7 @@ class Order:
 class Veiculo(Agent):
 
 
-    def __init__(self, jid:str, password:str, clock_jid:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int,tick_time:int):
+    def __init__(self, jid:str, password:str, clock_jid:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int):
         super().__init__(jid, password)
         self.clock_jid = clock_jid
 
@@ -55,12 +57,11 @@ class Veiculo(Agent):
         self.orders = []
         self.map = map
         self.current_location = current_location 
-        self.time_left_to_next_node= 0 
         self.next_node= None
-        self.tick_time = tick_time
         self.fuel_to_next_node= 0
         self.actual_route = []
-
+        self.pending_orders = []
+        self.time_to_finish_task = 0
 
 
     async def setup(self):
@@ -103,10 +104,18 @@ class Veiculo(Agent):
         async def run(self):
             msg = await self.receive(timeout=0.3)
             if msg:
-                tick = msg.body.get("tick")
-                print(f"[{self.agent.name}] Tick recebido: {tick}. Movendo veículo.")
-
-                self.update_location_and_time(tick)
+                type = msg.body.get("type")
+                tempo = msg.body.get("time")
+                veiculo = None
+                if type == "arrival":
+                    veiculo = msg.body.get("vehicle")
+                if veiculo == self.agent.name:
+                    self.agent.current_location = self.agent.actual_route.pop(0)
+                    self.agent.actual_route,  , _ = A_star_task_algorithm(self.agent.map, self.agent.current_location, self.agent.pending_orders, self.agent.capacity, self.agent.max_fuel)
+                if type == "Transito":
+                    update = await self.update_map(self,msg.body.get("data"))
+                    if update:
+                        _,_,tempo= self.graph.dijkstra(self.agent.current_location,self.agent.next_node)
 
         async def update_location_and_time(self,time_left):
                     """

@@ -281,7 +281,9 @@ def A_star_task_algorithm(graph: Graph, start:int, tasks:list[Order],capacity:in
                 node = node.parent
             path.reverse()
             
-            return path, current_node.g, root
+            # Retornar: caminho, tempo total, árvore de pesquisa
+            total_time = current_node.g
+            return path, total_time, root
         
         # Avaliar pontos disponíveis
         current_node.available_points = current_node.evaluate_available_points(graph)
