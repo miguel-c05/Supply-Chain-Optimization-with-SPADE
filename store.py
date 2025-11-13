@@ -144,8 +144,12 @@ class Store(Agent):
                     agent.add_behaviour(confirm_behav)
                     await confirm_behav.join()
                     
-                    # Optionally: Send cancellation to other warehouses that accepted
-                    # (Not implemented yet, but could be useful)
+                    # Send denial to other warehouses that accepted but weren't chosen
+                    for other_warehouse_jid, other_msg in self.acceptances:
+                        if other_warehouse_jid != warehouse_jid:
+                            deny_behav = agent.SendStoreDenial(other_msg)
+                            agent.add_behaviour(deny_behav)
+                            print(f"{agent.jid}> Sent denial to {other_warehouse_jid}")
                     
             else:
                 print(f"{agent.jid}> No acceptances received. All warehouses rejected or timed out.")
@@ -242,6 +246,30 @@ class Store(Agent):
             
             print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
 
+    class SendStoreDenial(OneShotBehaviour):
+        def __init__(self, msg : Message):
+            super().__init__()
+            self.dest = msg.sender
+            self.request_id = msg.get_metadata("request_id")
+            parts = msg.body.split(" ")
+            self.quantity = int(parts[0])
+            self.product = parts[1]
+        
+        async def run(self):
+            agent : Store = self.agent
+            
+            msg = Message(to=self.dest)
+            msg.set_metadata("performative", "store-deny")
+            msg.set_metadata("warehouse_id", str(self.dest))
+            msg.set_metadata("store_id", str(agent.jid))
+            msg.set_metadata("node_id", str(agent.node_id))
+            msg.set_metadata("request_id", str(self.request_id))
+            msg.body = f"{self.quantity} {self.product}"
+            
+            await self.send(msg)
+            
+            print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
+
     class ReceiveOrderCompletion(OneShotBehaviour):
         pass # TODO - implement if needed
     
@@ -305,12 +333,8 @@ class Store(Agent):
         Lower score is better.
         """
         
-        warehouse_node : Node = self.map.get_node(int(accept_msg.get_metadata("node_id")))
-        warehouse_x = warehouse_node.x
-        warehouse_y = warehouse_node.y
-        distance = ((self.pos_x - warehouse_x) ** 2 +(self.pos_y - warehouse_y) ** 2) ** 0.5
-        
-        score  = distance
+        warehouse_id = int(accept_msg.get_metadata("node_id"))
+        path, score = self.map.djikstra(warehouse_id, self.node_id)
         
         return score
       
@@ -325,9 +349,6 @@ class Store(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
-        node : Node = self.map.get_node(node_id)
-        self.pos_x = node.x
-        self.pos_y = node.y
     
     async def setup(self):
         self.stock = {}
