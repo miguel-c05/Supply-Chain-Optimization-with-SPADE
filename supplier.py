@@ -114,20 +114,82 @@ class Supplier(Agent):
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quant} {self.product}"
             
-            await self.send(msg)
+            print(f"{agent.jid}> Sending supplier-accept message to {self.sender}")
+            print(f"{agent.jid}> Message metadata: warehouse_id={self.sender}, request_id={self.request_id}")
             
-            confirm_behav = agent.ReceiveWarehouseConfirmation(msg, self.sender)
+            await self.send(msg)
+            print(f"{agent.jid}> Message sent successfully!")
+            
+            # Wait for either confirmation or denial
+            confirm_deny_behav = agent.ReceiveConfirmationOrDenial(msg, self.sender)
+            
+            # Template that matches BOTH warehouse-confirm AND warehouse-deny
             template = Template()
-            template.set_metadata("performative", "warehouse-confirm")
             template.set_metadata("supplier_id", str(agent.jid))
             template.set_metadata("warehouse_id", str(self.sender))
             template.set_metadata("request_id", str(self.request_id))
             
-            agent.add_behaviour(confirm_behav, template)
-            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
+            agent.add_behaviour(confirm_deny_behav, template)
+            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation or denial...")
             
             # Aguardar a confirmação ser recebida antes de terminar
-            # await confirm_behav.join()
+            # await confirm_deny_behav.join()
+            
+    
+    class ReceiveConfirmationOrDenial(OneShotBehaviour):
+        def __init__(self, accept_msg : Message, sender_jid):
+            super().__init__()
+            self.accepted_id = int(accept_msg.get_metadata("request_id"))
+            bod = accept_msg.body.split(" ")
+            self.accepted_quantity = int(bod[0])
+            self.accepted_product = bod[1]
+            self.sender_jid = str(sender_jid)
+        
+        async def run(self):
+            print(f"{self.agent.jid}> Waiting for warehouse confirmation or denial...")
+            msg : Message = await self.receive(timeout=10)
+            
+            if msg != None:
+                self.agent : Supplier
+                performative = msg.get_metadata("performative")
+                
+                # Message with body format "quantity product"
+                request = msg.body.split(" ")
+                quantity = int(request[0])
+                product = request[1]
+                
+                if performative == "warehouse-confirm":
+                    # Warehouse confirmed - add to pending deliveries
+                    # Put confirmed orders in pending_deliveries
+                    # Store the confirmation message object so other agents (e.g.
+                    # Vehicles) can inspect the full message when assigning/collecting
+                    # orders. pending_deliveries[jid] is a list of Message objects.
+                    pending_deliveries : dict = self.agent.pending_deliveries
+                    jid = str(msg.sender)
+                    if jid not in pending_deliveries:
+                        pending_deliveries[jid] = []
+                    pending_deliveries[jid].append(msg)
+                            
+                        
+                    print(f"{self.agent.jid}> Confirmation received! Delivery scheduled: {product} x{quantity}")
+                    print(f"{self.agent.jid}> ReceiveConfirmationOrDenial finished.")
+
+                    self.agent.print_stats()
+                    
+                elif performative == "warehouse-deny":
+                    # Warehouse denied (chose another supplier) - just log it
+                    print(f"{self.agent.jid}> Denial received! Warehouse chose another supplier.")
+                    print(f"{self.agent.jid}> Order not confirmed for {product} x{quantity}")
+                    
+                    self.agent.print_stats()
+                    
+            else:
+                print(f"{self.agent.jid}> Timeout: No confirmation or denial received in 10 seconds.")
+                # Since supplier has infinite stock, no need to rollback
+                # Just log that order wasn't confirmed
+                print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
+                
+                self.agent.print_stats()
             
             
     class ReceiveWarehouseConfirmation(OneShotBehaviour):
