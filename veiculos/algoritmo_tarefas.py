@@ -33,10 +33,12 @@ class TreeNode:
                  h=0,
                  g=0,
                  average_cost_per_task:float=0,
-                 lambda_penalty:int=2):
+                 lambda_penalty:int=2,
+                 order_id=None):
         self.state = state
         self.parent = parent
         self.location = location
+        self.order_id = order_id  # ID da ordem associada a este nó
         self.children = []
         self.initial_points_reached = initial_points_reached
         self.end_points_reached = end_points_reached
@@ -63,6 +65,8 @@ class TreeNode:
             new_initial_points_reached = self.initial_points_reached.copy()
             new_end_points_reached = self.end_points_reached.copy()
             new_quantity = self.quantity
+            point_order_id = point[1]  # order_id está no índice 1
+            
             if point[4] == 1:  # warehouse
                 new_initial_points_reached.append((point[1],point[0]))
                 new_quantity += point[2]
@@ -87,7 +91,8 @@ class TreeNode:
                     lambda_penalty=self.lambda_penalty
 
                 ),
-                average_cost_per_task=self.average_cost_per_task
+                average_cost_per_task=self.average_cost_per_task,
+                order_id=point_order_id  # Associar order_id ao nó
             )
             child_node.quantity = new_quantity
             #print(f"Depth:{child_node.depth}")
@@ -273,15 +278,18 @@ def A_star_task_algorithm(graph: Graph, start:int, tasks:list[Order],capacity:in
         
         # Verificar se chegamos ao objetivo
         if current_node.depth == target_depth:
-            # Reconstruir o caminho
+            # Reconstruir o caminho como lista de tuplos (location, order_id)
             path = []
             node = current_node
             while node is not None:
-                path.append(node.location)
+                if node.order_id is not None:  # Pular o nó raiz que não tem order_id
+                    path.append((node.location, node.order_id))
+                elif node.parent is None:  # Nó raiz - adicionar só a localização inicial
+                    path.append((node.location, None))
                 node = node.parent
             path.reverse()
             
-            # Retornar: caminho, tempo total, árvore de pesquisa
+            # Retornar: caminho com tuplos (location, order_id), tempo total, árvore de pesquisa
             total_time = current_node.g
             return path, total_time, root
         

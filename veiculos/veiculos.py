@@ -92,13 +92,14 @@ class Veiculo(Agent):
                     orderid=order_data["orderid"],
                     sender=order_data["sender"],
                     receiver=order_data["receiver"],
-                    tick_received=order_data.get("tick_received", 0)
+                    sender_location=order_data["sender_location"],
+                    receiver_location=order_data["receiver_location"],
                 )
                 
                 print(f"[{self.agent.name}] Ordem recebida: {order}")
                 
                 # Calcular informações da ordem (rota, tempo, combustível)
-                await self.calculate_order_info(order)
+                await order.deliver_time(sender_location=order.sender_location,receiver_location=order.receiver_location ,map=self.agent.map,weight=self.agent.weight)
                 
                 # Verificar se consegue encaixar na rota atual
                 can_fit, delivery_time = await self.can_fit_in_current_route(order)
@@ -166,71 +167,97 @@ class Veiculo(Agent):
         
         async def can_fit_in_current_route(self, new_order: Order) -> tuple[bool, float]:
             """
-            Verifica se a ordem pode ser encaixada na rota atual sem desvios e sem overload.
+            Verifica se a ordem pode ser encaixada na rota atual sem overload.
+            A rota é uma lista de tuplos (node_id, order_id).
+            
             Retorna (pode_encaixar, tempo_de_entrega)
             """
             # Se não há ordens, pode sempre encaixar
-            if not self.agent.orders and not self.agent.actual_route:
-                _, _, delivery_time = await self.agent.map.djikstra(
-                    self.agent.current_location,
-                    new_order.receiver_location
-                )
-                return True, delivery_time
+            if self.agent.presence.get_presence() == PresenceType.AVAILABLE:
+                return True, new_order.deliver_time
             
-            # Criar lista temporária com todas as ordens (atuais + nova)
-            temp_orders = self.agent.orders.copy()
-            temp_orders.append(new_order)
+            # Criar um dicionário com as ordens atuais para acesso rápido
+            orders_dict = {order.orderid: order for order in self.agent.orders}
             
-            # Verificar se há overload de capacidade
-            max_load = 0
+            # Verificar se a nova ordem passa por algum ponto da rota atual
+            route_nodes = [node_id for node_id, _ in self.agent.actual_route]
+            passes_through_sender = new_order.sender_location in route_nodes
+            
+            # Se não passa pelo sender, calcular tempo com pending orders
+            if not passes_through_sender:
+                future_time = await self.calculate_future_delivery_time(new_order)
+                return False, future_time
+            
+            # Simular a adição da ordem na rota
+            # Percorrer o path atual e simular a carga
             current_load = self.agent.current_load
+            new_order_picked = False
+            new_order_delivered = False
+            delivery_time = 0
+            cumulative_time = 0
             
-            for order in temp_orders:
-                # Simular pickup
-                current_load += order.quantity
-                max_load = max(max_load, current_load)
-                # Simular delivery
-                current_load -= order.quantity
-            
-            if max_load > self.agent.capacity:
-                return False, 0
-            
-            # Verificar se passa pelos pontos necessários (sender e receiver) na rota
-            route_points = set(self.agent.actual_route) if self.agent.actual_route else {self.agent.current_location}
-            route_points.add(self.agent.current_location)
-            
-            # Verificar se o sender está na rota ou é a localização atual
-            passes_sender = new_order.sender_location in route_points or new_order.sender_location == self.agent.current_location
-            
-            # Se não passa pelo sender, não pode encaixar
-            if not passes_sender:
-                return False, 0
-            
-            # Calcular tempo total com a nova ordem usando A*
-            try:
-                route, fuel, time = await A_star_task_algorithm(
-                    self.agent.map,
-                    self.agent.current_location,
-                    temp_orders,
-                    self.agent.capacity,
-                    self.agent.max_fuel
-                )
+            for i, (node_id, order_id) in enumerate(self.agent.actual_route):
+                # Calcular tempo até este ponto
+                if i > 0:
+                    prev_node_id = self.agent.actual_route[i - 1][0]
+                    _, _, segment_time = self.agent.map.djikstra(prev_node_id, node_id)
+                    cumulative_time += segment_time
                 
-                # Verificar se tem combustível suficiente
-                if fuel > self.agent.max_fuel:
-                    return False, 0
+                # Verificar se é pickup ou delivery da nova ordem
+                if node_id == new_order.sender_location and not new_order_picked:
+                    # Tentar fazer pickup da nova ordem
+                    test_load = current_load + new_order.quantity
+                    
+                    if test_load > self.agent.capacity:
+                        # Overflow - calcular tempo com pending orders
+                        future_time = await self.calculate_future_delivery_time(new_order)
+                        return False, future_time
+                    
+                    current_load = test_load
+                    new_order_picked = True
                 
-                return True, time
-            except:
-                return False, 0
+                elif node_id == new_order.receiver_location and new_order_picked and not new_order_delivered:
+                    # Fazer delivery da nova ordem
+                    current_load -= new_order.quantity
+                    new_order_delivered = True
+                    delivery_time = cumulative_time
+                    # Entregou o item - pode parar de simular
+                    return True, delivery_time
+                
+                # Processar a ordem existente neste ponto
+                if order_id and order_id in orders_dict:
+                    existing_order = orders_dict[order_id]
+                    
+                    # Verificar se é pickup ou delivery
+                    if node_id == existing_order.sender_location:
+                        # Pickup
+                        test_load = current_load + existing_order.quantity
+                        if test_load > self.agent.capacity:
+                            # Overflow ao processar ordem existente
+                            future_time = await self.calculate_future_delivery_time(new_order)
+                            return False, future_time
+                        current_load = test_load
+                    elif node_id == existing_order.receiver_location:
+                        # Delivery
+                        current_load -= existing_order.quantity
+            
+            # Se chegou aqui e não entregou, significa que não passou pelo receiver
+            # Calcular tempo com pending orders
+            if not new_order_delivered:
+                future_time = await self.calculate_future_delivery_time(new_order)
+                return False, future_time
+            
+            # Se entregou, retornar sucesso (não deveria chegar aqui pois retorna no loop)
+            return True, delivery_time
         
         async def calculate_future_delivery_time(self, order: Order) -> float:
             """
             Calcula o tempo necessário para executar a ordem após terminar a rota atual.
+            Usa A* para calcular a rota ótima com pending_orders + nova ordem.
             """
             # Determinar onde o veículo estará quando terminar a rota atual
             if self.agent.actual_route:
-                final_location = self.agent.actual_route[-1]
+                final_location = self.agent.actual_route[-1][0]  # Último node_id da rota
             else:
                 final_location = self.agent.current_location
             
@@ -238,27 +265,20 @@ class Veiculo(Agent):
             future_orders = self.agent.pending_orders.copy()
             future_orders.append(order)
             
-            # Calcular rota ótima com A*
-            try:
-                route, fuel, time = await A_star_task_algorithm(
-                    self.agent.map,
-                    final_location,
-                    future_orders,
-                    self.agent.capacity,
-                    self.agent.max_fuel
-                )
-                
-                # Adicionar o tempo que falta para terminar a rota atual
-                current_route_time = self.agent.time_to_finish_task
-                
-                return current_route_time + time
-            except:
-                # Se falhar, usar cálculo simples
-                _, _, time = await self.agent.map.djikstra(
-                    final_location,
-                    order.receiver_location
-                )
-                return self.agent.time_to_finish_task + time
+            # Calcular rota ótima com A* desde o último ponto
+            
+            route, total_time, _ = A_star_task_algorithm(
+                self.agent.map,
+                final_location,
+                future_orders,
+                self.agent.capacity,
+                self.agent.max_fuel
+            )
+            
+            # Adicionar o tempo que falta para terminar a rota atual
+            current_route_time = self.agent.time_to_finish_task
+            
+            return current_route_time + total_time
         
         async def wait_for_confirmation(self, sender_jid: str, orderid: int, timeout: float = 30.0) -> bool:
             """
