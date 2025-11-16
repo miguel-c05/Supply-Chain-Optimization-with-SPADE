@@ -45,6 +45,7 @@ Store                           Warehouse
 {
   "performative": "store-buy",
   "store_id": "store1@localhost",
+  "node_id": "5",
   "request_id": "0"
 }
 ```
@@ -60,6 +61,7 @@ Store                           Warehouse
   "metadata": {
     "performative": "store-buy",
     "store_id": "store1@localhost",
+    "node_id": "5",
     "request_id": "0"
   },
   "body": "5 A"
@@ -69,7 +71,7 @@ Store                           Warehouse
 **Warehouse Action:**
 - Check if product exists and quantity available
 - If yes: Lock stock and send acceptance
-- If no: Ignore (timeout on store side)
+- If no: Send rejection or ignore (timeout on store side)
 
 ---
 
@@ -83,6 +85,7 @@ Store                           Warehouse
   "performative": "warehouse-accept",
   "warehouse_id": "warehouse1@localhost",
   "store_id": "store1@localhost",
+  "node_id": "12",
   "request_id": "0"
 }
 ```
@@ -99,6 +102,7 @@ Store                           Warehouse
     "performative": "warehouse-accept",
     "warehouse_id": "warehouse1@localhost",
     "store_id": "store1@localhost",
+    "node_id": "12",
     "request_id": "0"
   },
   "body": "5 A"
@@ -107,6 +111,7 @@ Store                           Warehouse
 
 **Store Action:**
 - Receive acceptance
+- Calculate score using warehouse node_id for distance
 - Update own stock (add received quantity)
 - Send confirmation
 
@@ -122,6 +127,7 @@ Store                           Warehouse
   "performative": "store-confirm",
   "warehouse_id": "warehouse1@localhost",
   "store_id": "store1@localhost",
+  "node_id": "5",
   "request_id": "0"
 }
 ```
@@ -138,6 +144,7 @@ Store                           Warehouse
     "performative": "store-confirm",
     "warehouse_id": "warehouse1@localhost",
     "store_id": "store1@localhost",
+    "node_id": "5",
     "request_id": "0"
   },
   "body": "5 A"
@@ -147,6 +154,47 @@ Store                           Warehouse
 **Warehouse Action:**
 - Unlock stock (remove from locked_stock)
 - Add to pending_orders for vehicle pickup
+
+---
+
+### 4. `warehouse-reject` (Rejection)
+
+**Direction:** Warehouse → Store
+
+**Metadata:**
+```json
+{
+  "performative": "warehouse-reject",
+  "warehouse_id": "warehouse1@localhost",
+  "store_id": "store1@localhost",
+  "node_id": "12",
+  "request_id": "0"
+}
+```
+
+**Body Format:**
+```
+"{quantity} {product} {reason}"
+```
+
+**Example:**
+```json
+{
+  "metadata": {
+    "performative": "warehouse-reject",
+    "warehouse_id": "warehouse1@localhost",
+    "store_id": "store1@localhost",
+    "node_id": "12",
+    "request_id": "0"
+  },
+  "body": "5 A insufficient_stock"
+}
+```
+
+**Store Action:**
+- Receive rejection with reason
+- Add request to `failed_requests` queue for retry
+- May try other warehouses
 
 ---
 
@@ -198,6 +246,7 @@ Warehouse                       Supplier
 {
   "performative": "warehouse-buy",
   "warehouse_id": "warehouse1@localhost",
+  "node_id": "12",
   "request_id": "1"
 }
 ```
@@ -213,6 +262,7 @@ Warehouse                       Supplier
   "metadata": {
     "performative": "warehouse-buy",
     "warehouse_id": "warehouse1@localhost",
+    "node_id": "12",
     "request_id": "1"
   },
   "body": "25 A"
@@ -236,6 +286,7 @@ Warehouse                       Supplier
   "performative": "supplier-accept",
   "supplier_id": "supplier1@localhost",
   "warehouse_id": "warehouse1@localhost",
+  "node_id": "8",
   "request_id": "1"
 }
 ```
@@ -252,6 +303,7 @@ Warehouse                       Supplier
     "performative": "supplier-accept",
     "supplier_id": "supplier1@localhost",
     "warehouse_id": "warehouse1@localhost",
+    "node_id": "8",
     "request_id": "1"
   },
   "body": "25 A"
@@ -275,6 +327,7 @@ Warehouse                       Supplier
   "performative": "warehouse-confirm",
   "supplier_id": "supplier1@localhost",
   "warehouse_id": "warehouse1@localhost",
+  "node_id": "12",
   "request_id": "1"
 }
 ```
@@ -291,6 +344,7 @@ Warehouse                       Supplier
     "performative": "warehouse-confirm",
     "supplier_id": "supplier1@localhost",
     "warehouse_id": "warehouse1@localhost",
+    "node_id": "12",
     "request_id": "1"
   },
   "body": "25 A"
@@ -320,6 +374,7 @@ Warehouse                       Supplier
 Each message includes multiple metadata keys to ensure race condition prevention:
 - `performative`: Message type
 - Agent IDs: Source and destination
+- `node_id`: Geographic location/position identifier of sender
 - `request_id`: Unique identifier for each request
 
 ### 2. **Template Filtering**
@@ -331,19 +386,103 @@ template.set_metadata("store_id", str(agent.jid))
 template.set_metadata("request_id", str(request_id))
 ```
 
-### 3. **Request Counter Management**
+### 3. **Node ID for Location Tracking**
+- Every message includes sender's `node_id` in metadata
+- Enables distance calculation between agents
+- Used for warehouse selection scoring
+- Essential for vehicle routing optimization
+
+### 4. **Request Counter Management**
 - Counter incremented **BEFORE** sending message
 - Ensures template matches sent metadata
 
-### 4. **Body Format Consistency**
-All messages use: `"{quantity} {product}"`
+### 5. **Body Format Consistency**
+All messages use: `"{quantity} {product}"` (or `"{quantity} {product} {reason}"` for rejections)
 - No redundant data (request_id only in metadata)
 - Easy parsing with `split(" ")`
 
-### 5. **Timeout Strategies**
+### 6. **Timeout Strategies**
 - Shorter timeouts for critical operations (5s for acceptances)
 - Longer timeouts for confirmations (10s)
 - Failed requests queued for retry
+
+---
+
+## Store Warehouse Selection Protocol
+
+### Overview
+When a store sends a `store-buy` request to multiple warehouses, it collects ALL responses (accepts and rejects) before making a decision.
+
+### Selection Flow
+
+```
+Store                 Warehouse1       Warehouse2       Warehouse3
+  |                       |                |                |
+  | store-buy (to all)    |                |                |
+  |---------------------->|--------------->|--------------->|
+  |                       |                |                |
+  | Wait for all responses (5s timeout)   |                |
+  |                       |                |                |
+  | warehouse-accept      |                |                |
+  |<----------------------|                |                |
+  | (node_id=12)          |                |                |
+  |                       |                |                |
+  | warehouse-reject      |                |                |
+  |<--------------------------------------|                |
+  | (insufficient_stock)  |                |                |
+  |                       |                |                |
+  | warehouse-accept      |                |                |
+  |<----------------------------------------------------|
+  | (node_id=18)          |                |                |
+  |                       |                |                |
+  | Calculate scores:     |                |                |
+  | - Warehouse1: 42.5    |                |                |
+  | - Warehouse3: 28.3    |                |                |
+  |                       |                |                |
+  | Select best (lowest score)            |                |
+  |                       |                |                |
+  | store-confirm         |                |                |
+  |<----------------------------------------------------|
+```
+
+### Warehouse Scoring
+
+**Function:** `Store.calculate_warehouse_score(warehouse_jid, quantity, product, accept_msg)`
+
+**Criteria (examples):**
+1. **Distance** (using node_id):
+   ```python
+   warehouse_node_id = int(accept_msg.get_metadata("node_id"))
+   warehouse_node = agent.map.get_node(warehouse_node_id)
+   distance = math.sqrt((agent.pos_x - warehouse_node.x)**2 + 
+                       (agent.pos_y - warehouse_node.y)**2)
+   ```
+
+2. **Historical Reliability**: Track success rate of past orders
+3. **Delivery Time**: Expected time to delivery (could be in metadata)
+4. **Cost**: Price per unit (could be in metadata)
+5. **Warehouse Load**: Current capacity utilization
+
+**Lower score = Better warehouse**
+
+### Response Collection
+
+**Behaviour:** `CollectWarehouseResponses` and `ReceiveAllResponses`
+
+**Process:**
+1. Send `store-buy` to N warehouses
+2. Wait for responses (5s timeout)
+3. Collect acceptances in list: `[(warehouse_jid, msg), ...]`
+4. Collect rejections in list: `[(warehouse_jid, msg, reason), ...]`
+5. Calculate score for each acceptance
+6. Select warehouse with lowest score
+7. Send `store-confirm` to selected warehouse
+8. (Optional) Send cancellation to other accepting warehouses
+
+**Handling:**
+- If no acceptances: Add to `failed_requests` queue
+- If timeout before all responses: Proceed with received responses
+- If all reject: Add to `failed_requests` queue
 
 ---
 
@@ -460,4 +599,4 @@ template.set_metadata("request_id", "0")  # Only receives messages with request_
 
 ---
 
-**Last Updated:** November 8, 2025
+**Last Updated:** November 13, 2025

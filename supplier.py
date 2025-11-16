@@ -6,6 +6,7 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
+from world.graph import Graph, Node
 
 class Supplier(Agent):
     
@@ -109,26 +110,33 @@ class Supplier(Agent):
             msg.set_metadata("performative", "supplier-accept")
             msg.set_metadata("supplier_id", str(agent.jid))
             msg.set_metadata("warehouse_id", str(self.sender))
+            msg.set_metadata("node_id", str(agent.node_id))
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quant} {self.product}"
             
-            await self.send(msg)
+            print(f"{agent.jid}> Sending supplier-accept message to {self.sender}")
+            print(f"{agent.jid}> Message metadata: warehouse_id={self.sender}, request_id={self.request_id}")
             
-            confirm_behav = agent.ReceiveWarehouseConfirmation(msg, self.sender)
+            await self.send(msg)
+            print(f"{agent.jid}> Message sent successfully!")
+            
+            # Wait for either confirmation or denial
+            confirm_deny_behav = agent.ReceiveConfirmationOrDenial(msg, self.sender)
+            
+            # Template that matches BOTH warehouse-confirm AND warehouse-deny
             template = Template()
-            template.set_metadata("performative", "warehouse-confirm")
             template.set_metadata("supplier_id", str(agent.jid))
             template.set_metadata("warehouse_id", str(self.sender))
             template.set_metadata("request_id", str(self.request_id))
             
-            agent.add_behaviour(confirm_behav, template)
-            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation...")
+            agent.add_behaviour(confirm_deny_behav, template)
+            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation or denial...")
             
             # Aguardar a confirmação ser recebida antes de terminar
-            # await confirm_behav.join()
+            # await confirm_deny_behav.join()
             
-            
-    class ReceiveWarehouseConfirmation(OneShotBehaviour):
+    
+    class ReceiveConfirmationOrDenial(OneShotBehaviour):
         def __init__(self, accept_msg : Message, sender_jid):
             super().__init__()
             self.accepted_id = int(accept_msg.get_metadata("request_id"))
@@ -138,48 +146,63 @@ class Supplier(Agent):
             self.sender_jid = str(sender_jid)
         
         async def run(self):
-            print(f"{self.agent.jid}> Waiting for warehouse confirmation...")
+            print(f"{self.agent.jid}> Waiting for warehouse confirmation or denial...")
             msg : Message = await self.receive(timeout=10)
             
             if msg != None:
                 self.agent : Supplier
+                performative = msg.get_metadata("performative")
                 
                 # Message with body format "quantity product"
                 request = msg.body.split(" ")
                 quantity = int(request[0])
                 product = request[1]
                 
-                # Put confirmed orders in pending_deliveries
-                # Store the confirmation message object so other agents (e.g.
-                # Vehicles) can inspect the full message when assigning/collecting
-                # orders. pending_deliveries[jid] is a list of Message objects.
-                pending_deliveries : dict = self.agent.pending_deliveries
-                jid = str(msg.sender)
-                if jid not in pending_deliveries:
-                    pending_deliveries[jid] = []
-                pending_deliveries[jid].append(msg)
+                if performative == "warehouse-confirm":
+                    # Warehouse confirmed - add to pending deliveries
+                    # Put confirmed orders in pending_deliveries
+                    # Store the confirmation message object so other agents (e.g.
+                    # Vehicles) can inspect the full message when assigning/collecting
+                    # orders. pending_deliveries[jid] is a list of Message objects.
+                    pending_deliveries : dict = self.agent.pending_deliveries
+                    jid = str(msg.sender)
+                    if jid not in pending_deliveries:
+                        pending_deliveries[jid] = []
+                    pending_deliveries[jid].append(msg)
+                            
                         
-                    
-                print(f"{self.agent.jid}> Confirmation received! Delivery scheduled: {product} x{quantity}")
-                print(f"{self.agent.jid}> ReceiveWarehouseConfirmation finished.")
+                    print(f"{self.agent.jid}> Confirmation received! Delivery scheduled: {product} x{quantity}")
+                    print(f"{self.agent.jid}> ReceiveConfirmationOrDenial finished.")
 
-                self.agent.print_stats()
+                    self.agent.print_stats()
+                    
+                elif performative == "warehouse-deny":
+                    # Warehouse denied (chose another supplier) - just log it
+                    print(f"{self.agent.jid}> Denial received! Warehouse chose another supplier.")
+                    print(f"{self.agent.jid}> Order not confirmed for {product} x{quantity}")
+                    
+                    self.agent.print_stats()
+                    
             else:
-                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds.")
+                print(f"{self.agent.jid}> Timeout: No confirmation or denial received in 10 seconds.")
                 # Since supplier has infinite stock, no need to rollback
                 # Just log that order wasn't confirmed
                 print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
                 
                 self.agent.print_stats()
-            
-            
-    class CommunicationPhase(OneShotBehaviour):
-        async def run(self):
-            pass
     
-    class ActionPhase(OneShotBehaviour):
+    class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
-            pass
+            agent : Supplier = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg != None:
+                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
+                self.current_time += delta
+                
+                # TODO -- implement update graph  
+                agent.update_graph(msg)
     
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
@@ -205,11 +228,17 @@ class Supplier(Agent):
         
         print("="*40)
 
+    def update_graph(self, msg : Message):
+        pass # TODO - implement if needed
     # ------------------------------------------
     
-    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
+        self.map : Graph = map
+        node : Node = self.map.get_node(node_id)
+        self.pos_x = node.x
+        self.pos_y = node.y
     
     async def setup(self):
         # Supplier has infinite stock - no need to track stock levels

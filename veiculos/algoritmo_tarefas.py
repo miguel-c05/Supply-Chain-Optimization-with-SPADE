@@ -1,4 +1,4 @@
-from ..world.graph import Graph
+from world.graph import Graph
 
 class Order:
     def __init__(self, product:str, quantity:int, orderid:int, sender:str, receiver:str, tick_received:int):
@@ -25,7 +25,7 @@ class Order:
         self.deliver_time = time
         self.fuel = fuel
         self.sender_location = sender_location
-        self.receiver_location = receiver_location
+        self.receiver_location = receiver_location 
 
 class TreeNode:
     def __init__(self, location,state: list[Order],max_quantity:int=0, max_fuel:int=0,parent=None, depth=0,initial_points_reached:list[int]=0,end_points_reached:list[int]=0, h=0,g=0,average_cost_per_task:float=0):

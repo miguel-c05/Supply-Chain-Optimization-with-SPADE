@@ -3,9 +3,11 @@ import random
 import queue
 import spade
 from spade.agent import Agent
-from spade.behaviour import OneShotBehaviour, CyclicBehaviour
+from spade.behaviour import OneShotBehaviour, PeriodicBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
+from world.graph import Graph
+import config
 
 class Store(Agent):
     
@@ -58,6 +60,7 @@ class Store(Agent):
                 msg = Message(to=contact)
                 msg.set_metadata("performative", "store-buy")
                 msg.set_metadata("store_id", str(agent.jid))
+                msg.set_metadata("node_id", str(agent.node_id))
                 msg.set_metadata("request_id", str(request_id_for_template))
                 msg.body = f"{self.quantity} {self.product}"
                 
@@ -70,57 +73,150 @@ class Store(Agent):
             if msg:
                 agent.current_buy_request = msg
         
-                behav = agent.RecieveWarehouseAcceptance(msg)
-                template = Template()
-                template.set_metadata("performative", "warehouse-accept")
-                template.set_metadata("store_id", str(agent.jid))
-                template.set_metadata("request_id", str(request_id_for_template))
-                agent.add_behaviour(behav, template)
+                # Collect responses from all warehouses
+                behav = agent.CollectWarehouseResponses(
+                    msg, 
+                    request_id_for_template, 
+                    len(contacts),
+                    self.quantity,
+                    self.product
+                )
+                agent.add_behaviour(behav)
                 
                 await behav.join()
 
-    class RecieveWarehouseAcceptance(OneShotBehaviour):
-        def __init__(self, msg : Message):
+    class CollectWarehouseResponses(OneShotBehaviour):
+        def __init__(self, msg : Message, request_id : int, num_warehouses : int, quantity : int, product : str):
             super().__init__()
-            self.request_id = msg.get_metadata("request_id")
+            self.request_id = request_id
             self.buy_msg = msg.body
+            self.num_warehouses = num_warehouses
+            self.quantity = quantity
+            self.product = product
+            self.acceptances = []  # List of (warehouse_jid, msg)
+            self.rejections = []   # List of (warehouse_jid, msg, reason)
             
         async def run(self):
-            self.agent : Store
+            agent : Store = self.agent
             
-            # Para ja guardamos apenas uma das mensagens recebidas (n escolhemos)
-            msg : Message = await self.receive(timeout=5)
+            # Setup template that accepts BOTH warehouse-accept AND warehouse-reject
+            template = Template()
+            template.set_metadata("store_id", str(agent.jid))
+            template.set_metadata("request_id", str(self.request_id))
+            # Don't filter by performative - we want both accept and reject
             
-            if msg != None:
-                rec_id = msg.get_metadata("request_id")
-                rec = msg.body.split(" ")
-                quantity = int(rec[0])
-                product = rec[1]
-                
-                print(
-                    f"{self.agent.jid}> Recieved acceptance from {msg.sender}: "
-                    f"id={rec_id} "
-                    f"quant={quantity} "
-                    f"product={product}"
-                )
-                
-                behav = self.agent.SendStoreConfirmation(msg)
-                self.agent.add_behaviour(behav)
-                
-                await behav.join()
+            # Create a combined behaviour to listen for both
+            combined_behav = agent.ReceiveAllResponses(
+                self.request_id,
+                self.num_warehouses,
+                self.acceptances,
+                self.rejections
+            )
             
+            # Add with template that matches both performatives
+            agent.add_behaviour(combined_behav, template)
+            
+            # Wait for collection to complete
+            await combined_behav.join()
+            
+            # Now evaluate and choose best warehouse
+            if self.acceptances:
+                print(f"{agent.jid}> Received {len(self.acceptances)} acceptance(s) and {len(self.rejections)} rejection(s)")
+                
+                # Calculate scores for each warehouse that accepted
+                best_warehouse = None
+                best_score = float('inf')
+                
+                
+                for warehouse_jid, msg in self.acceptances:
+                    score = agent.calculate_warehouse_score(msg)
+                    print(f"{agent.jid}> Warehouse {warehouse_jid} score: {score}")
+                    
+                    if score < best_score:
+                        best_score = score
+                        best_warehouse = (warehouse_jid, msg)
+                
+                if best_warehouse:
+                    warehouse_jid, accept_msg = best_warehouse
+                    print(f"{agent.jid}> Selected warehouse {warehouse_jid} with score {best_score}")
+                    
+                    # Send confirmation to the chosen warehouse
+                    confirm_behav = agent.SendStoreConfirmation(accept_msg)
+                    agent.add_behaviour(confirm_behav)
+                    await confirm_behav.join()
+                    
+                    # Send denial to other warehouses that accepted but weren't chosen
+                    for other_warehouse_jid, other_msg in self.acceptances:
+                        if other_warehouse_jid != warehouse_jid:
+                            deny_behav = agent.SendStoreDenial(other_msg)
+                            agent.add_behaviour(deny_behav)
+                            print(f"{agent.jid}> Sent denial to {other_warehouse_jid}")
+                    
             else:
-                print(f"{self.agent.jid}> No acceptance gotten. Request \"{self.buy_msg}\" "
-                      f"saved in self.failed_requests")
+                print(f"{agent.jid}> No acceptances received. All warehouses rejected or timed out.")
+                print(f"{agent.jid}> Request saved in self.failed_requests")
                 
-                # Actually add the failed request to the queue
-                agent : Store = self.agent
+                # Add to failed requests
                 failed_msg = Message(to=agent.current_buy_request.to)
                 agent.set_buy_metadata(failed_msg)
                 failed_msg.set_metadata("request_id", str(self.request_id))
                 failed_msg.body = self.buy_msg
                 agent.failed_requests.put(failed_msg)
-    
+
+    class ReceiveAllResponses(OneShotBehaviour):
+        def __init__(self, request_id : int, num_warehouses : int, acceptances : list, rejections : list):
+            super().__init__()
+            self.request_id = request_id
+            self.num_warehouses = num_warehouses
+            self.acceptances = acceptances  # Shared list
+            self.rejections = rejections    # Shared list
+            self.responses_received = 0
+            self.timeout = 5  # seconds to wait for all responses
+            
+        async def run(self):
+            agent : Store = self.agent
+            
+            import time
+            start_time = time.time()
+            
+            while self.responses_received < self.num_warehouses:
+                elapsed = time.time() - start_time
+                remaining_timeout = self.timeout - elapsed
+                
+                if remaining_timeout <= 0:
+                    print(f"{agent.jid}> Timeout: Only received {self.responses_received}/{self.num_warehouses} responses")
+                    break
+                
+                msg : Message = await self.receive(timeout=remaining_timeout)
+                
+                if msg:
+                    performative = msg.get_metadata("performative")
+                    warehouse_jid = str(msg.sender)
+                    
+                    if performative == "warehouse-accept":
+                        parts = msg.body.split(" ")
+                        quantity = int(parts[0])
+                        product = parts[1]
+                        
+                        print(f"{agent.jid}> Received acceptance from {warehouse_jid}: {quantity} {product}")
+                        self.acceptances.append((warehouse_jid, msg))
+                        
+                    elif performative == "warehouse-reject":
+                        parts = msg.body.split(" ")
+                        quantity = int(parts[0])
+                        product = parts[1]
+                        reason = parts[2] if len(parts) > 2 else "unknown"
+                        
+                        print(f"{agent.jid}> Received rejection from {warehouse_jid}: {quantity} {product} (reason: {reason})")
+                        self.rejections.append((warehouse_jid, msg, reason))
+                    
+                    self.responses_received += 1
+                else:
+                    # No more messages, timeout
+                    break
+            
+            print(f"{agent.jid}> Finished collecting responses: {len(self.acceptances)} accepts, {len(self.rejections)} rejects")
+
     class SendStoreConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
@@ -143,6 +239,7 @@ class Store(Agent):
             msg.set_metadata("performative", "store-confirm")
             msg.set_metadata("warehouse_id", str(self.dest))
             msg.set_metadata("store_id", str(agent.jid))
+            msg.set_metadata("node_id", str(agent.node_id))
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quantity} {self.product}"
             
@@ -150,18 +247,48 @@ class Store(Agent):
             
             print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
 
-    class RetryPreviousBuy(OneShotBehaviour):
+    class SendStoreDenial(OneShotBehaviour):
+        def __init__(self, msg : Message):
+            super().__init__()
+            self.dest = msg.sender
+            self.request_id = msg.get_metadata("request_id")
+            parts = msg.body.split(" ")
+            self.quantity = int(parts[0])
+            self.product = parts[1]
+        
+        async def run(self):
+            agent : Store = self.agent
+            
+            msg = Message(to=self.dest)
+            msg.set_metadata("performative", "store-deny")
+            msg.set_metadata("warehouse_id", str(self.dest))
+            msg.set_metadata("store_id", str(agent.jid))
+            msg.set_metadata("node_id", str(agent.node_id))
+            msg.set_metadata("request_id", str(self.request_id))
+            msg.body = f"{self.quantity} {self.product}"
+            
+            await self.send(msg)
+            
+            print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
+    
+    class RetryPreviousBuy(PeriodicBehaviour):
         async def run(self):
             agent : Store = self.agent
             
             if not agent.failed_requests.empty():
                 request : Message = agent.failed_requests.get()
                 request_id = request.get_metadata("request_id")
+                parts = request.body.split(" ")
+                quantity = int(parts[0])
+                product = parts[1]
+                
                 contacts = list(agent.presence.contacts.keys())
+                num_warehouses = len(contacts)
                 
                 for contact in contacts:
                     msg : Message = Message(to=contact)
                     agent.set_buy_metadata(msg)
+                    msg.set_metadata("node_id", str(agent.node_id))
                     msg.set_metadata("request_id", str(request_id))
                     msg.body = request.body
 
@@ -170,69 +297,79 @@ class Store(Agent):
 
                     await self.send(msg)
 
-                behav = agent.RecieveWarehouseAcceptance(msg)
-                template = Template()
-                template.set_metadata("performative", "warehouse-accept")
-                template.set_metadata("store_id", str(agent.jid))
-                template.set_metadata("request_id", str(request_id))
-                agent.add_behaviour(behav, template)
-
+                # Use CollectWarehouseResponses instead
+                behav = agent.CollectWarehouseResponses(msg, request_id, quantity, product, num_warehouses)
+                agent.add_behaviour(behav)
                 await behav.join()
     
-    # ------------------------------------------
-    #               CLOCK PHASES
-    # ------------------------------------------         
-            
-    class CommunicationPhase(OneShotBehaviour):
+    class ActionTurn(OneShotBehaviour):
+        def __init__(self, period):
+            super().__init__(period=period)
+            self.agent : Store # Type hint -- might break at runtime
+            self.product_list = self.agent.product_list
+            self.buy_prob = self.agent.buy_prob
+            self.max_buy_quantity = self.agent.max_buy_quantity
+            self.time_passed = period
+
         async def run(self):
             agent : Store = self.agent
             
-            """
-            In the communication phase, a Store will:
-            - Draw from self.communication_queue and execute that behaviour
-            
-            The communication_queue will encompass the following behaviours:
-            - ReceiveOrder
-            """
-        
-            
-            template = Template()
-            # TODO - introduzir metadata de msg de "end action"
-            behav = agent.ActionPhase()
-            agent.add_behaviour(behav, template)
-        
-    class ActionPhase(OneShotBehaviour):
-        async def run(self):
-            agent : Store = self.agent
-            
-            """
-            In the action phase, a Store will:
-            - Draw from self.action_queue and execute that behaviour
-            
-            The action_queue will encompass the following behaviours:
-            - BuyProduct
-            """
-            
-            end_msg = await self.receive(timeout=40)
-            
-            template = Template()
-            # TODO - introduzir metadata de "end communication"
-            behav = agent.CommunicationPhase()
+            for self.time_passed in range(config.STORE_BUY_FREQUENCY):
+                roll : float = random.randint(1,100) / 100.0
+                if roll < self.buy_prob:
+                    product = random.choice(self.product_list)
+                    quantity = random.randint(1, self.max_buy_quantity)
     
+                    behav = agent.BuyProduct(quantity, product)
+                    agent.add_behaviour(behav)
+    
+    class ReceiveTimeDelta(CyclicBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg != None:
+                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
+                self.current_time += delta
+                
+                # TODO -- implement update graph  
+                agent.update_graph(msg)
+                
+                behav = agent.ActionTurn(delta)
+                agent.add_behaviour(behav)            
+    
+    class ReceiveVehicleArrival(CyclicBehaviour):
+        async def run(self):
+            pass # TODO - implement if needed
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
     # ------------------------------------------
+    
+    def calculate_warehouse_score(self, accept_msg : Message) -> float:
+        """
+        Calculate the score for a warehouse based its distance to the store.
+        Lower score is better.
+        """
+        
+        warehouse_id = int(accept_msg.get_metadata("node_id"))
+        path, score = self.map.djikstra(warehouse_id, self.node_id)
+        
+        return score
       
-    def set_buy_metadata(self, msg : Message):
+    def set_buy_metadata(self, msg : Message) -> None:
         msg.set_metadata("performative", "store-buy")
         msg.set_metadata("store_id", str(self.jid))
         # Note: request_id should be set separately by the caller
     
+    def update_graph(self, msg : Message) -> None:
+        pass # TODO - implement if needed
     # ------------------------------------------
     
-    def __init__(self, jid, password, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
+        self.map : Graph = map
     
     async def setup(self):
         self.stock = {}
@@ -240,11 +377,19 @@ class Store(Agent):
         self.failed_requests : queue.Queue = queue.Queue()
         self.request_counter = 0
         
-        self.communication_queue : queue.Queue = queue.Queue()
-        self.action_queue : queue.Queue = queue.Queue()
+        # Parameters for ActionCycle behaviour
+        self.product_list = config.PRODUCTS
+        self.buy_prob = config.STORE_BUY_PROBABILITY
+        self.max_buy_quantity = config.STORE_MAX_BUY_QUANTITY
+
+        behav = self.ReceiveTimeDelta()
+        template : Template = Template()
+        # TODO -- set template metadata
+        self.add_behaviour(behav, template)
         
-        behav = self.CommunicationPhase()
-        self.add_behaviour(behav)
+        # Buy retrying is not bound by ticks
+        retry_behav = self.RetryPreviousBuy(period=5)
+        self.add_behaviour(retry_behav)
 
 
 async def main():
