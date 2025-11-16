@@ -3,8 +3,10 @@ import asyncio
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
+from spade.template import Template
 from world.world import World
 import json
+import time
 
 
 class WorldAgent(Agent):
@@ -28,48 +30,81 @@ class WorldAgent(Agent):
             
             # Create world instance with specified parameters
             self.agent.world = World(
-                width=5,
-                height=5,
-                mode="uniform",
-                max_cost=5,
-                seed=None,
-                gas_stations=1,
+                width=7,
+                height=7,
+                mode="different", 
+                max_cost=4, 
+                seed=None, 
+                gas_stations=1, 
                 warehouses=2,
-                suppliers=3,
-                stores=2,
+                suppliers=3, 
+                stores=2, 
                 highway=True,
                 traffic_probability=0.4,
                 traffic_spread_probability=0.75,
                 traffic_interval=3,
                 untraffic_probability=0.4
             )
+
             
             print(f"[{self.agent.name}] World initialized successfully!")
             print(f"[{self.agent.name}] World Grid: {self.agent.world.width}x{self.agent.world.height}")
             print(f"[{self.agent.name}] World Seed: {self.agent.world.seed}")
             print(f"[{self.agent.name}] Starting main simulation loop...")
 
-    class WorldTickBehaviour(CyclicBehaviour):
-        """Manages world ticks and simulation loop."""
+    class TimeDeltaBehaviour(CyclicBehaviour):
+        """Handles time-delta simulation requests."""
         
         async def run(self):
-            """Execute a world tick at regular intervals."""
-            try:
-                # Execute world tick
-                self.agent.world.tick()
-                current_tick = self.agent.world.tick_counter
-                
-                print(f"\n[{self.agent.name}] ===== Tick {current_tick} =====")
-                print(f"[{self.agent.name}] Infected edges: {len(self.agent.world.graph.infected_edges)}")
-                
-                # Broadcast world state to all subscribed agents
-                await self.agent._broadcast_world_state()
-                
-                # Wait for the tick interval before next tick
-                await asyncio.sleep(self.agent.tick_interval)
-                
-            except Exception as e:
-                print(f"[{self.agent.name}] Error in WorldTickBehaviour: {e}")
+            """Process time-delta messages and simulate world."""
+            msg = await self.receive(timeout=1)
+            
+            if msg:
+                try:
+                    content = json.loads(msg.body)
+                    delta_time = content.get("delta_time", 1)
+                    sender = str(msg.sender)
+                    
+                    print(f"\n[{self.agent.name}] Received time-delta request: {delta_time} ticks from {sender}")
+                    
+                    # Simulate delta_time ticks
+                    results = []
+                    for _ in range(delta_time):
+                        self.agent.world.tick()
+                        current_tick = self.agent.world.tick_counter
+                        time_instant = time.time()
+                        
+                        print(f"[{self.agent.name}] Simulated tick {current_tick}")
+                        
+                        # Collect edge information
+                        for edge in self.agent.world.graph.edges:
+                            edge.calculate_fuel_consumption()
+                            edge_info = {
+                                "node1_id": edge.node1.id,
+                                "node2_id": edge.node2.id,
+                                "new_time": edge.weight,
+                                "new_fuel_consumption": round(edge.fuel_consumption, 3),
+                                "time_instant": time_instant
+                            }
+                            results.append(edge_info)
+                    
+                    # Send response with all edge states
+                    response = Message(to=sender)
+                    response.set_metadata("performative", "inform")
+                    response.body = json.dumps({
+                        "type": "time_delta_response",
+                        "delta_time": delta_time,
+                        "final_tick": self.agent.world.tick_counter,
+                        "edges": results
+                    })
+                    await self.send(response)
+                    
+                    print(f"[{self.agent.name}] Sent time-delta response with {len(results)} edge updates")
+                    
+                except json.JSONDecodeError as e:
+                    print(f"[{self.agent.name}] Error decoding time-delta message: {e}")
+                except Exception as e:
+                    print(f"[{self.agent.name}] Error in TimeDeltaBehaviour: {e}")
 
     class MessageHandlerBehaviour(CyclicBehaviour):
         """Handles incoming messages from other agents."""
@@ -292,7 +327,13 @@ class WorldAgent(Agent):
         
         # Add behaviors
         self.add_behaviour(self.WorldInitBehaviour())
-        self.add_behaviour(self.WorldTickBehaviour())
+        
+        # Add time-delta behaviour with template
+        template = Template()
+        template.set_metadata("performative", "request")
+        template.metadata = {"performative": "request"}
+        self.add_behaviour(self.TimeDeltaBehaviour(), template)
+        
         self.add_behaviour(self.MessageHandlerBehaviour())
         
         print(f"[{self.name}] WorldAgent setup complete!")
