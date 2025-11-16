@@ -190,60 +190,19 @@ class Supplier(Agent):
                 print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
                 
                 self.agent.print_stats()
-            
-            
-    class ReceiveWarehouseConfirmation(OneShotBehaviour):
-        def __init__(self, accept_msg : Message, sender_jid):
-            super().__init__()
-            self.accepted_id = int(accept_msg.get_metadata("request_id"))
-            bod = accept_msg.body.split(" ")
-            self.accepted_quantity = int(bod[0])
-            self.accepted_product = bod[1]
-            self.sender_jid = str(sender_jid)
-        
+    
+    class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
-            print(f"{self.agent.jid}> Waiting for warehouse confirmation...")
-            msg : Message = await self.receive(timeout=10)
+            agent : Supplier = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
             
             if msg != None:
-                self.agent : Supplier
+                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
+                self.current_time += delta
                 
-                # Message with body format "quantity product"
-                request = msg.body.split(" ")
-                quantity = int(request[0])
-                product = request[1]
-                
-                # Put confirmed orders in pending_deliveries
-                # Store the confirmation message object so other agents (e.g.
-                # Vehicles) can inspect the full message when assigning/collecting
-                # orders. pending_deliveries[jid] is a list of Message objects.
-                pending_deliveries : dict = self.agent.pending_deliveries
-                jid = str(msg.sender)
-                if jid not in pending_deliveries:
-                    pending_deliveries[jid] = []
-                pending_deliveries[jid].append(msg)
-                        
-                    
-                print(f"{self.agent.jid}> Confirmation received! Delivery scheduled: {product} x{quantity}")
-                print(f"{self.agent.jid}> ReceiveWarehouseConfirmation finished.")
-
-                self.agent.print_stats()
-            else:
-                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds.")
-                # Since supplier has infinite stock, no need to rollback
-                # Just log that order wasn't confirmed
-                print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
-                
-                self.agent.print_stats()
-            
-            
-    class CommunicationPhase(OneShotBehaviour):
-        async def run(self):
-            pass
-    
-    class ActionPhase(OneShotBehaviour):
-        async def run(self):
-            pass
+                # TODO -- implement update graph  
+                agent.update_graph(msg)
     
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
@@ -269,6 +228,8 @@ class Supplier(Agent):
         
         print("="*40)
 
+    def update_graph(self, msg : Message):
+        pass # TODO - implement if needed
     # ------------------------------------------
     
     def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):

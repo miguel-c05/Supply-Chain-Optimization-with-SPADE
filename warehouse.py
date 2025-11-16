@@ -1,12 +1,15 @@
 import asyncio
 import random
+import json
 import queue
 import spade
 from spade.agent import Agent
-from spade.behaviour import OneShotBehaviour, CyclicBehaviour
+from spade.behaviour import OneShotBehaviour, CyclicBehaviour, PeriodicBehaviour
 from spade.message import Message
 from spade.template import Template
-from world.graph import Graph, Node
+from world.graph import Graph
+from veiculos.algoritmo_tarefas import Order
+import config
 
 class Warehouse(Agent):
     
@@ -28,7 +31,6 @@ class Warehouse(Agent):
             warehouse_agent.pending_orders[store_agent.jid]
     
     What is missing (TODO):
-        - Setup intelligent buying method
         - Communicate with Vehicles
         
     Class variables:
@@ -40,12 +42,10 @@ class Warehouse(Agent):
             - keys: products
             - values: quantity
 
-        - self.pending_orders (dict(list())): each key is a store JID and the value
-        is a list of confirmed buy Message objects for that store. Use this to
-        retrieve all confirmed orders for a store (useful for Vehicles or
-        transport assignment).
-            - keys: store.jid
-            - values: list() of spade.message.Message (confirmed "store-confirm" messages)
+        - self.pending_orders (dict()): Dictionary with order_id as key and Order object as value.
+        Use this to retrieve confirmed orders by their ID (useful for Vehicles).
+            - keys: order_id (int)
+            - values: Order object
     """
     
     # ------------------------------------------
@@ -197,19 +197,17 @@ class Warehouse(Agent):
                 if performative == "store-confirm":
                     # Store confirmed - update locked stock and add to pending orders
                     self.agent.locked_stock[product] -= quantity
+                    self.agent.current_capacity[product] += quantity
                     
-                    # Put bought items aside (in self.pending_orders)
-                    # Store the confirmation message object so other agents (e.g.
-                    # Vehicles) can inspect the full message when assigning/collecting
-                    # orders. pending_orders[jid] is a list of Message objects.
-                    pending_orders : dict = self.agent.pending_orders
-                    jid = str(msg.sender)
-                    if jid not in pending_orders:
-                        pending_orders[jid] = []
-                    pending_orders[jid].append(msg)
+                    # Create Order object from message
+                    order = self.agent.message_to_order(msg)
+                    
+                    # Add to pending_orders dict with order_id as key
+                    self.agent.pending_orders[order.orderid] = order
                             
                         
                     print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
+                    print(f"{self.agent.jid}> Order {order.orderid} added to pending orders")
                     print(f"{self.agent.jid}> ReceiveConfirmationOrDenial finished, stock updated.")
 
                     self.agent.print_stock()
@@ -229,56 +227,7 @@ class Warehouse(Agent):
                 self.agent.locked_stock[self.accepted_product] -= self.accepted_quantity
                 self.agent.stock[self.accepted_product] += self.accepted_quantity
                 
-                self.agent.print_stock()
-            
-    
-    class ReceiveConfirmation(OneShotBehaviour):
-        def __init__(self, accept_msg : Message, sender_jid):
-            super().__init__()
-            self.accepted_id = int(accept_msg.get_metadata("request_id"))
-            bod = accept_msg.body.split(" ")
-            self.accepted_quantity = int(bod[0])
-            self.accepted_product = bod[1]
-            self.sender_jid = str(sender_jid)
-            self.sender_jid = str(sender_jid)
-        
-        async def run(self):
-            print(f"{self.agent.jid}> Waiting for store confirmation...")
-            msg : Message = await self.receive(timeout=10)
-            
-            if msg != None:
-                self.agent : Warehouse
-                
-                # Message with body format "quantity product"
-                request = msg.body.split(" ")
-                quantity = int(request[0])
-                product = request[1]
-                
-                # Update warehouse locked stock
-                self.agent.locked_stock[product] -= quantity
-                
-                # Put bought items aside (in self.pending_orders)
-                # Store the confirmation message object so other agents (e.g.
-                # Vehicles) can inspect the full message when assigning/collecting
-                # orders. pending_orders[jid] is a list of Message objects.
-                pending_orders : dict = self.agent.pending_orders
-                jid = str(msg.sender)
-                if jid not in pending_orders:
-                    pending_orders[jid] = []
-                pending_orders[jid].append(msg)
-                        
-                    
-                print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
-                print(f"{self.agent.jid}> ReceiveConfirmation finished, stock updated.")
-
-                self.agent.print_stock()
-            else:
-                print(f"{self.agent.jid}> Timeout: No confirmation received in 10 seconds. Unlocking stock...")
-                self.agent.locked_stock[self.accepted_product] -= self.accepted_quantity
-                self.agent.stock[self.accepted_product] += self.accepted_quantity
-                
-                self.agent.print_stock()
-            
+                self.agent.print_stock()            
     
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
@@ -463,51 +412,8 @@ class Warehouse(Agent):
                     print(f"{agent.jid}> No message received in timeout window")
                     break
             
-            print(f"{agent.jid}> Finished collecting responses: {len(self.acceptances)} accepts, {len(self.rejections)} rejects")
-            
-    class RecieveSupplierAcceptance(OneShotBehaviour):
-        def __init__(self, msg : Message):
-            super().__init__()
-            self.request_id = msg.get_metadata("request_id")
-            self.buy_msg = msg.body
-            
-        async def run(self):
-            self.agent : Warehouse
-            
-            print(f"{self.agent.jid}> Waiting for supplier acceptance (request_id={self.request_id})...")
-            # Para ja guardamos apenas uma das mensagens recebidas (n escolhemos)
-            msg : Message = await self.receive(timeout=5)
-            
-            if msg != None:
-                rec_id = msg.get_metadata("request_id")
-                rec = msg.body.split(" ")
-                quantity = int(rec[0])
-                product = rec[1]
-                
-                print(
-                    f"{self.agent.jid}> Recieved acceptance from {msg.sender}: "
-                    f"id={rec_id} "
-                    f"quant={quantity} "
-                    f"product={product}"
-                )
-                
-                behav = self.agent.SendWarehouseConfirmation(msg)
-                self.agent.add_behaviour(behav)
-                
-                await behav.join()
-            
-            else:
-                print(f"{self.agent.jid}> No acceptance gotten. Request \"{self.buy_msg}\" "
-                      f"saved in self.failed_requests")
-                
-                # Actually add the failed request to the queue
-                agent : Warehouse = self.agent
-                failed_msg = Message(to=agent.current_buy_request.to)
-                agent.set_buy_metadata(failed_msg)
-                failed_msg.set_metadata("request_id", str(self.request_id))
-                failed_msg.body = self.buy_msg
-                agent.failed_requests.put(failed_msg)
-                
+            print(f"{agent.jid}> Finished collecting responses: {len(self.acceptances)} accepts, {len(self.rejections)} rejects")               
+    
     class SendWarehouseConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
@@ -590,11 +496,89 @@ class Warehouse(Agent):
                 agent.add_behaviour(behav, template)
 
                 await behav.join()
+    
+    class HandleResupply(PeriodicBehaviour):
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            # Check stock levels
+            for product, amount in agent.stock.items():
+                if amount < config.WAREHOUSE_RESUPPLY_THRESHOLD:
+                    # Need to restock this product
+                    restock_amount = config.WAREHOUSE_MAX_PRODUCT_CAPACITY - amount
+                    print(f"{agent.jid}> Stock of {product} is low ({amount}). Initiating restock of {restock_amount}.")
+                    
+                    buy_behav = agent.BuyMaterial(restock_amount, product)
+                    agent.add_behaviour(buy_behav)
+                    
+                    await buy_behav.join()
             
     class AssignVehicle(OneShotBehaviour):
         async def run(self):
-            pass
+            pass # TODO - implement if needed
     
+    class ReceiveVehicleArrival(CyclicBehaviour):
+        """
+        Behaviour to receive arrival notifications from vehicles.
+        Accepts ONLY: vehicle-pickup, vehicle-delivery
+        """
+        async def run(self):
+            agent : Warehouse = self.agent
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg:
+                performative = msg.get_metadata("performative")
+                
+                # Double-check (should already be filtered by templates)
+                if performative not in ["vehicle-pickup", "vehicle-delivery"]:
+                    print(f"{agent.jid}> ERROR: Received unexpected performative '{performative}'")
+                    return
+                
+                # Parse message body
+                try:
+                    data = json.loads(msg.body)
+                    order = agent.dict_to_order(data)
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
+                    return
+                
+                # Handle based on performative
+                if performative == "vehicle-pickup":
+                    # Vehicle is picking up an order to deliver to store
+                    if order.orderid in agent.pending_orders:
+                        del agent.pending_orders[order.orderid]
+                        print(f"{agent.jid}> Vehicle {msg.sender} picked up order {order.orderid} "
+                            f"({order.quantity}x{order.product} for {order.sender})")
+                    else:
+                        print(f"{agent.jid}> Order {order.orderid} not found in pending orders!")
+                
+                elif performative == "vehicle-delivery":
+                    # Vehicle is delivering supplies from supplier
+                    product = order.product
+                    quantity = order.quantity
+                    
+                    if product in agent.stock:
+                        agent.stock[product] += quantity
+                    else:
+                        agent.stock[product] = quantity
+                    
+                    print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
+                    agent.print_stock()               
+                
+                
+    
+    class ReceiveTimeDelta(CyclicBehaviour):
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg != None:
+                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
+                self.current_time += delta
+                
+                # TODO -- implement update graph  
+                agent.update_graph(msg)
     
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
@@ -610,7 +594,38 @@ class Warehouse(Agent):
         path, score = self.map.djikstra(supplier_node_id, self.node_id)
         
         return score
-    
+
+    def message_to_order(self, msg : Message) -> Order:
+        """
+        Convert a store-confirm message to an Order object.
+        """
+        body = msg.body
+        parts = body.split(" ")
+        quantity = int(parts[0])
+        product = parts[1]
+        
+        order_id = int(msg.get_metadata("request_id"))
+        sender = str(msg.sender)  # Store JID
+        receiver = str(self.jid)  # Warehouse JID
+        store_location = int(msg.get_metadata("node_id"))
+        warehouse_location = self.node_id
+        tick = self.current_tick
+        
+        order = Order(
+            product=product,
+            quantity=quantity,
+            orderid=order_id,
+            sender=sender,
+            receiver=receiver,
+            tick_received=tick
+        )
+        
+        # Set locations
+        order.sender_location = store_location  # Store location
+        order.receiver_location = warehouse_location  # Warehouse location
+        
+        return order
+        
     def set_buy_metadata(self, msg : Message):
         msg.set_metadata("performative", "warehouse-buy")
         msg.set_metadata("warehouse_id", str(self.jid))
@@ -621,16 +636,30 @@ class Warehouse(Agent):
         
         print(f"Current {self.jid} UNLOCKED stock:")
         for product, amount in self.stock.items():
-            print(f"{product}: {amount}")
-            
+            print(f"{product}: {amount}/{config.WAREHOUSE_MAX_PRODUCT_CAPACITY}")
         print("-"*30)
         
         print(f"Current {self.jid} LOCKED stock:")
         for product, amount in self.locked_stock.items():
-            print(f"{product}: {amount}")
+            print(f"{product}: {amount}/{self.stock[product] + amount}")
         
         print("="*30)
     
+    def update_graph(self, msg : Message):
+        pass # TODO - implement if needed
+    
+    def dict_to_order(self, data : dict) -> Order:
+        order =  Order(
+            product=data["product"],
+            quantity=data["quantity"],
+            orderid=data["orderid"],
+            sender=data["sender"],
+            receiver=data["receiver"],
+            sender_location=data["sender_location"],
+            receiver_location=data["receiver_location"],
+            tick_received=data.get("tick_received", 0)
+        )
+        return order
     # ------------------------------------------
     
     def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
@@ -639,23 +668,49 @@ class Warehouse(Agent):
         self.map : Graph = map
     
     async def setup(self):
-        self.stock = {"A" : random.randint(0,20),
-                      "B" : random.randint(0,20),
-                      "C" : random.randint(0,20),}
+        # Initialize stock and time
+        self.stock = {}
+        self.current_tick = 0
+        
+        # Set the starting stock randomly
+        product_max = config.WAREHOUSE_MAX_PRODUCT_CAPACITY
+        for prod in config.PRODUCTS:
+            self.stock[prod] = random.randint(0, product_max)
+        
+        self.current_capacity = {prod: product_max - quant for prod, quant in self.stock.items()}
         
         # Dict with products as keys and the sum of requested items as values
         self.locked_stock = {}
-        
         self.print_stock()
         
-        self.pending_orders = {}
-        self.request_counter = 0
+        # Dict with order_id as key and Order object as value
+        self.pending_orders : dict[int, Order] = {}
+        self.request_counter : int = 0
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()
         
+        # Run ReceiveBuyRequest behaviour
         behav = self.ReceiveBuyRequest()
         template = Template()
         template.set_metadata("performative", "store-buy")
+        self.add_behaviour(behav, template)
+        
+        # Run HandleResupply behaviour
+        behav = self.HandleResupply(period=5)
+        self.add_behaviour(behav)
+        
+        # Run ReceiveVehicleArrival behaviour for pickups
+        behav = self.ReceiveVehicleArrival()
+        template = Template()
+        # TODO - set template metadata if needed
+        template.set_metadata("performative", "vehicle-pickup")
+        self.add_behaviour(behav, template)
+        
+        # Run ReceiveVehicleArrival behaviour for deliveries
+        behav = self.ReceiveVehicleArrival()
+        template = Template()
+        # TODO - set template metadata if needed
+        template.set_metadata("performative", "vehicle-delivery")
         self.add_behaviour(behav, template)
 
 

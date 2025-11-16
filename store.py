@@ -3,10 +3,11 @@ import random
 import queue
 import spade
 from spade.agent import Agent
-from spade.behaviour import OneShotBehaviour, PeriodicBehaviour
+from spade.behaviour import OneShotBehaviour, PeriodicBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
-from world.graph import Graph, Node
+from world.graph import Graph
+import config
 
 class Store(Agent):
     
@@ -269,9 +270,6 @@ class Store(Agent):
             await self.send(msg)
             
             print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
-
-    class ReceiveOrderCompletion(OneShotBehaviour):
-        pass # TODO - implement if needed
     
     class RetryPreviousBuy(PeriodicBehaviour):
         async def run(self):
@@ -304,25 +302,46 @@ class Store(Agent):
                 agent.add_behaviour(behav)
                 await behav.join()
     
-    class ActionCycle(PeriodicBehaviour):
-        def __init__(self, product_list, buy_prob, max_buy_quantity, period=10):
+    class ActionTurn(OneShotBehaviour):
+        def __init__(self, period):
             super().__init__(period=period)
-            self.product_list = product_list
-            self.buy_prob = buy_prob
-            self.max_buy_quantity = max_buy_quantity
+            self.agent : Store # Type hint -- might break at runtime
+            self.product_list = self.agent.product_list
+            self.buy_prob = self.agent.buy_prob
+            self.max_buy_quantity = self.agent.max_buy_quantity
+            self.time_passed = period
 
         async def run(self):
             agent : Store = self.agent
             
-            roll : float = random.randint(1,100) / 100.0
-            if roll < self.buy_prob:
-                product = random.choice(self.product_list)
-                quantity = random.randint(1, self.max_buy_quantity)
-
-                behav = agent.BuyProduct(quantity, product)
-                agent.add_behaviour(behav)
-            
+            for self.time_passed in range(config.STORE_BUY_FREQUENCY):
+                roll : float = random.randint(1,100) / 100.0
+                if roll < self.buy_prob:
+                    product = random.choice(self.product_list)
+                    quantity = random.randint(1, self.max_buy_quantity)
     
+                    behav = agent.BuyProduct(quantity, product)
+                    agent.add_behaviour(behav)
+    
+    class ReceiveTimeDelta(CyclicBehaviour):
+        async def run(self):
+            agent : Store = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg != None:
+                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
+                self.current_time += delta
+                
+                # TODO -- implement update graph  
+                agent.update_graph(msg)
+                
+                behav = agent.ActionTurn(delta)
+                agent.add_behaviour(behav)            
+    
+    class ReceiveVehicleArrival(CyclicBehaviour):
+        async def run(self):
+            pass # TODO - implement if needed
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
     # ------------------------------------------
@@ -338,11 +357,13 @@ class Store(Agent):
         
         return score
       
-    def set_buy_metadata(self, msg : Message):
+    def set_buy_metadata(self, msg : Message) -> None:
         msg.set_metadata("performative", "store-buy")
         msg.set_metadata("store_id", str(self.jid))
         # Note: request_id should be set separately by the caller
     
+    def update_graph(self, msg : Message) -> None:
+        pass # TODO - implement if needed
     # ------------------------------------------
     
     def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
@@ -357,14 +378,16 @@ class Store(Agent):
         self.request_counter = 0
         
         # Parameters for ActionCycle behaviour
-        self.product_list = ["A", "B", "C", "D"]
-        self.buy_prob = 0.5
-        self.max_buy_quantity = 10
+        self.product_list = config.PRODUCTS
+        self.buy_prob = config.STORE_BUY_PROBABILITY
+        self.max_buy_quantity = config.STORE_MAX_BUY_QUANTITY
 
-        behav = self.ActionCycle(self.product_list, self.buy_prob,
-                                 self.max_buy_quantity, period=10)
-        self.add_behaviour(behav)
+        behav = self.ReceiveTimeDelta()
+        template : Template = Template()
+        # TODO -- set template metadata
+        self.add_behaviour(behav, template)
         
+        # Buy retrying is not bound by ticks
         retry_behav = self.RetryPreviousBuy(period=5)
         self.add_behaviour(retry_behav)
 
