@@ -1,6 +1,15 @@
 import sys
 import os
-from ..world.graph import Graph
+from typing import TYPE_CHECKING
+
+# Adicionar o diretório pai ao path para importações absolutas
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from world.graph import Graph
+
+# Importação condicional para evitar circular import
+if TYPE_CHECKING:
+    from veiculos.veiculos import Order
 
 # Cache global para armazenar resultados do Dijkstra
 _dijkstra_cache = {}
@@ -25,7 +34,7 @@ def clear_dijkstra_cache():
 class TreeNode:
     def __init__(self, 
                  location,
-                 state: list[Order],
+                 state: list["Order"],
                  max_quantity:int=0, 
                  max_fuel:int=0,parent=None,
                  depth=0,initial_points_reached:list[int]=0,
@@ -236,7 +245,7 @@ def calculate_heuristic(state,end_points_reached,initial_points_reached,average_
     return (average_cost_per_task * (total_tasks - completed_tasks)) - (lambda_penalty * active_tasks)
 
 
-def A_star_task_algorithm(graph: Graph, start:int, tasks:list[Order],capacity:int, max_fuel: int):
+def A_star_task_algorithm(graph: Graph, start:int, tasks:list["Order"],capacity:int, max_fuel: int):
     # Implementação simplificada do algoritmo A* para ordenação de tarefas
     from queue import PriorityQueue
     
