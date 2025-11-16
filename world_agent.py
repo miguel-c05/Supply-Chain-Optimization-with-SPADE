@@ -67,26 +67,35 @@ class WorldAgent(Agent):
                     
                     print(f"\n[{self.agent.name}] Received time-delta request: {delta_time} ticks from {sender}")
                     
-                    # Simulate delta_time ticks
+                    # Store initial edge states
+                    initial_states = {}
+                    for edge in self.agent.world.graph.edges:
+                        initial_states[(edge.node1.id, edge.node2.id)] = edge.weight
+                    
+                    # Simulate delta_time ticks and track changes
                     results = []
-                    for _ in range(delta_time):
-                        self.agent.world.tick()
+                    for i in range(delta_time):
+                        self.agent.world.get_events(1)  # Simulate one tick at a time
                         current_tick = self.agent.world.tick_counter
-                        time_instant = time.time()
                         
-                        print(f"[{self.agent.name}] Simulated tick {current_tick}")
+                        print(f"[{self.agent.name}] Simulated tick {i+1}/{delta_time} (current tick: {current_tick})")
                         
-                        # Collect edge information
+                        # Check which edges changed in this tick
                         for edge in self.agent.world.graph.edges:
-                            edge.calculate_fuel_consumption()
-                            edge_info = {
-                                "node1_id": edge.node1.id,
-                                "node2_id": edge.node2.id,
-                                "new_time": edge.weight,
-                                "new_fuel_consumption": round(edge.fuel_consumption, 3),
-                                "time_instant": time_instant
-                            }
-                            results.append(edge_info)
+                            edge_key = (edge.node1.id, edge.node2.id)
+                            if edge.weight != initial_states[edge_key]:
+                                # Edge changed - record the instant (tick index)
+                                edge.calculate_fuel_consumption()
+                                edge_info = {
+                                    "node1_id": edge.node1.id,
+                                    "node2_id": edge.node2.id,
+                                    "new_time": edge.weight,
+                                    "new_fuel_consumption": round(edge.fuel_consumption, 3),
+                                    "instant": i  # The tick index when it changed
+                                }
+                                results.append(edge_info)
+                                # Update the initial state to current state
+                                initial_states[edge_key] = edge.weight
                     
                     # Send response with all edge states
                     response = Message(to=sender)
