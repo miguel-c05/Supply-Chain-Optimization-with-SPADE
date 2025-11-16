@@ -174,7 +174,8 @@ class Graph:
         target_node = self.get_node(target_node_id)
 
         if not start_node or not target_node:
-            return None, 0.0
+            # Sempre retornar (path, fuel, time) para consistência
+            return None, 0.0, 0.0
 
         # Min-heap priority queue (usa weight como critério primário, fuel como desempate)
         queue = [(0, 0, start_node)]  # (weight_acumulado, fuel_acumulado, node)
@@ -222,11 +223,13 @@ class Graph:
 
         # Calculate total fuel consumption along the path
         total_fuel = 0.0
+        total_time = 0.0
         for i in range(len(path) - 1):
             edge = self.get_edge(path[i].id, path[i + 1].id)
             if edge:
                 # Ensure fuel consumption is calculated
                 edge.calculate_fuel_consumption()
                 total_fuel += edge.fuel_consumption
+                total_time += edge.weight
 
-        return path, round(total_fuel, 3) 
+        return path, round(total_fuel, 3), round(total_time, 3)
