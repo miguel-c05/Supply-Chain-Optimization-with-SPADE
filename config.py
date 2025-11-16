@@ -3,3 +3,13 @@ import os
 BASE_DIR =  os.getcwd()
 
 SEED_DIR = os.path.join(BASE_DIR, "seeds")
+
+PRODUCTS = ["A", "B", "C", "D"]
+WAREHOUSE_MAX_PRODUCT_CAPACITY = 100
+WAREHOUSE_RESUPPLY_THRESHOLD = 20
+
+STORE_MAX_BUY_QUANTITY = 20
+STORE_BUY_FREQUENCY = 10  # ticks
+STORE_BUY_PROBABILITY = 0.7  # 70% chance to buy each cycle
+
+VEHICLE_CAPACITY = 50
