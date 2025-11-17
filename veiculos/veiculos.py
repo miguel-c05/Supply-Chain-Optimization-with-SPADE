@@ -13,7 +13,7 @@ import os
 # Adicionar o diretório pai ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from algoritmo_tarefas import A_star_task_algorithm
+from veiculos.algoritmo_tarefas import A_star_task_algorithm
 from world.graph import Graph
 
 
@@ -73,8 +73,9 @@ class Veiculo(Agent):
         
         self.presence.approve_all=True
         self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
-        # TODO: dar presence no event agent 
-        # self.presence.subscribe(self.clock_jid)
+        
+        print(f"[{self.name}] Vehicle agent setup complete. Presence: AVAILABLE/CHAT")
+        print(f"[{self.name}] Will automatically subscribe to suppliers through presence.approve_all")
         
         # Template para receber propostas de ordens dos warehouses
         order_template = Template()
@@ -136,8 +137,8 @@ class Veiculo(Agent):
                 # Verificar se consegue encaixar na rota atual
                 can_fit, delivery_time = await self.can_fit_in_current_route(order)
                 
-                # Enviar proposta ao warehouse
-                proposal_msg = Message(to=msg.sender)
+                # Enviar proposta de volta ao SUPPLIER usando make_reply()
+                proposal_msg = msg.make_reply()
                 proposal_msg.set_metadata("performative", "vehicle-proposal")
                 
                 proposal_data = {
@@ -149,7 +150,7 @@ class Veiculo(Agent):
                 proposal_msg.body = json.dumps(proposal_data)
                 await self.send(proposal_msg)
                 
-                print(f"[{self.agent.name}] Proposta enviada - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
+                print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
                     
                 # Guardar informações no dicionário de confirmações pendentes
                 self.agent.pending_confirmations[order.orderid] = {
