@@ -206,7 +206,9 @@ class TestWarehouseAgent(Agent):
                     print(f"[{self.agent.name}] Erro ao processar status: {e}")
     
     class SimulateArrivalBehaviour(PeriodicBehaviour):
-        """Simula mensagens de chegada (arrival) para testar o MovementBehaviour do veículo"""
+        """
+        Simula mensagens de chegada (arrival) e trânsito (transit) para testar o MovementBehaviour do veículo.
+        """
         
         def __init__(self, period, start_at=None):
             super().__init__(period, start_at)
@@ -215,11 +217,23 @@ class TestWarehouseAgent(Agent):
         async def run(self):
             # Na primeira iteração, esperar 20 segundos
             if self.first_run:
-                print(f"\n[{self.agent.name}] ⏳ Primeira iteração: aguardando 20 segundos...\n")
+                print(f"\n[{self.agent.name}] ⏳ Primeira iteração: aguardando 10 segundos...\n")
                 await asyncio.sleep(10)
                 self.first_run = False
-                print(f"\n[{self.agent.name}] ✓ Iniciando envio de mensagens de arrival\n")
+                print(f"\n[{self.agent.name}] ✓ Iniciando envio de mensagens de arrival e transit\n")
             
+            # Decidir se envia arrival ou transit (50% cada)
+            simulate_transit = random.random() < 0.5
+            
+            if simulate_transit:
+                # Simular trânsito
+                await self.simulate_transit()
+            else:
+                # Simular arrival
+                await self.simulate_arrival()
+        
+        async def simulate_arrival(self):
+            """Simula mensagem de arrival (chegada ao destino)"""
             # 50% de chance de enviar mensagem com o nome correto do veículo
             # 50% de chance de enviar com nome aleatório (para testar filtro)
             if random.random() < 0.5:
@@ -246,6 +260,64 @@ class TestWarehouseAgent(Agent):
             print(f"  Veículo: {vehicle_name}")
             print(f"  Correto: {'✓ SIM' if vehicle_name == self.agent.vehicle_jid.split('@')[0] else '✗ NÃO (será ignorado)'}")
             print(f"  Tempo: {data['time']:.2f}\n")
+        
+        async def simulate_transit(self):
+            """Simula mensagem de trânsito (mudança de peso de uma aresta)"""
+            # Selecionar uma aresta aleatória do grafo
+            # graph.edges já é uma lista, não um dicionário
+            edges = self.agent.graph.edges
+            
+            if not edges:
+                print(f"[{self.agent.name}] ⚠️  Não há arestas no grafo para simular trânsito")
+                return
+            
+            # Escolher aresta aleatória
+            edge = random.choice(edges)
+            
+            # Criar novo peso (aumentar ou diminuir o peso atual)
+            # 70% chance de aumentar (trânsito), 30% de diminuir (aliviar trânsito)
+            if random.random() < 0.7:
+                # Aumentar peso (simular trânsito)
+                new_weight = edge.weight * random.uniform(1.5, 3.0)
+                traffic_status = "🚗 TRÂNSITO"
+            else:
+                # Diminuir peso (aliviar trânsito)
+                new_weight = max(edge.weight * random.uniform(0.5, 0.9), 1.0)
+                traffic_status = "✅ ALÍVIO"
+            
+            new_weight = round(new_weight, 2)
+            
+            # Gerar tempo aleatório para simular quando o trânsito foi detectado
+            time_value = round(random.uniform(1.0, 10.0), 2)
+            
+            # Criar mensagem de transit conforme formato esperado (linhas 484 e 602-619)
+            msg = Message(to=self.agent.vehicle_jid)
+            msg.set_metadata("performative", "inform")
+            
+            data = {
+                "type": "Transit",
+                "time": time_value,
+                "data": {
+                    "edges": [
+                        {
+                            "node1": edge.node1.id,
+                            "node2": edge.node2.id,
+                            "weight": new_weight
+                        }
+                    ]
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            msg.body = json.dumps(data)
+            
+            await self.send(msg)
+            
+            print(f"\n[{self.agent.name}] 🚦 TRANSIT simulado enviado - {traffic_status}")
+            print(f"  Edge: {edge.node1.id} → {edge.node2.id}")
+            print(f"  Peso antigo: {edge.weight:.2f}")
+            print(f"  Peso novo: {new_weight:.2f}")
+            print(f"  Variação: {((new_weight/edge.weight - 1) * 100):+.1f}%")
+            print(f"  Tempo: {time_value:.2f}\n")
 
 
 async def main():

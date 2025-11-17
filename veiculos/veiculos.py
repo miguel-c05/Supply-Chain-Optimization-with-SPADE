@@ -479,6 +479,7 @@ class Veiculo(Agent):
                     print(f"[{self.agent.name}] Tempo simulado para mover: {tempo_simulado}")
                     
                 if type == "Transit":
+                    print("Atualizar transito")
                     # Atualizar mapa com novas informações de trânsito
                     await self.update_map(data.get("data"))
                 
@@ -600,7 +601,9 @@ class Veiculo(Agent):
         
         async def update_map(self, traffic_data: dict):
             """Atualiza o mapa com novos dados de trânsito"""
+
             if not traffic_data:
+                print("erroco")
                 return
             
             # Atualizar pesos das arestas com base nos dados de trânsito
