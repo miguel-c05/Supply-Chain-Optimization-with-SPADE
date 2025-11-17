@@ -11,6 +11,7 @@ from typing import List, Dict, Any
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
 from spade.message import Message
+from spade.presence import PresenceType, PresenceShow
 
 
 class Event:
@@ -64,18 +65,29 @@ class EventDrivenAgent(Agent):
     
     def __init__(self, jid: str, password: str, simulation_interval: float = 5.0):
         super().__init__(jid, password)
-        self.event_heap = []  # Min heap de eventos
+        self.event_heap = []  # Min heap de eventos (não-trânsito)
+        self.transit_events = []  # Lista separada para eventos de trânsito
         self.simulation_interval = simulation_interval  # Intervalo de simulação (5s)
-        self.registered_vehicles = set()  # Veículos registrados
+        self.registered_vehicles = []  # Veículos registrados
+        self.registered_warehouses = []  # Warehouses registrados
+        self.registered_stores = []  # Stores registrados
+        self.world_agent = None  # Agente do mundo
         self.event_count = 0  # Contador de eventos recebidos
         self.processed_count = 0  # Contador de eventos processados
         self.last_simulation_time = 0.0  # Tempo da última simulação
-    
+        self.time_simulated = 0.0  # Tempo total simulado
+        
     async def setup(self):
         print(f"\n{'='*70}")
         print(f"[{self.name}] Event-Driven Agent iniciado")
         print(f"[{self.name}] Intervalo de simulação: {self.simulation_interval}s")
         print(f"{'='*70}\n")
+        self.presence.approve_all=True
+        all_agents = [self.registered_vehicles, self.registered_warehouses, self.registered_stores] 
+        for agent_list in all_agents:
+            self.presence.subscribe(self.clock_jid)
+        self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
+    
         
         # Behaviour para receber eventos continuamente
         receive_behaviour = self.ReceiveEventsBehaviour()
@@ -86,8 +98,6 @@ class EventDrivenAgent(Agent):
         self.add_behaviour(process_behaviour)
         
         # Behaviour para registrar veículos
-        register_behaviour = self.RegisterVehiclesBehaviour()
-        self.add_behaviour(register_behaviour)
     
     class ReceiveEventsBehaviour(CyclicBehaviour):
         """
@@ -113,12 +123,19 @@ class EventDrivenAgent(Agent):
                         timestamp=data.get("timestamp")
                     )
                     
-                    # Adicionar à heap
-                    heapq.heappush(self.agent.event_heap, event)
-                    self.agent.event_count += 1
+                    # Verificar se é evento de trânsito
+                    if event_type == "transit" or event_type == "Transit":
+                        # Adicionar à lista de trânsito
+                        self.agent.transit_events.append(event)
+                        print(f"[{self.agent.name}] 📩 Evento de trânsito recebido: {event}")
+                        print(f"   Eventos de trânsito: {len(self.agent.transit_events)}")
+                    else:
+                        # Adicionar à heap
+                        heapq.heappush(self.agent.event_heap, event)
+                        print(f"[{self.agent.name}] 📩 Evento recebido: {event}")
+                        print(f"   Eventos na heap: {len(self.agent.event_heap)}")
                     
-                    print(f"[{self.agent.name}] 📩 Evento recebido: {event}")
-                    print(f"   Eventos na heap: {len(self.agent.event_heap)}")
+                    self.agent.event_count += 1
                 
                 except Exception as e:
                     print(f"[{self.agent.name}] ❌ Erro ao processar mensagem: {e}")
@@ -129,106 +146,109 @@ class EventDrivenAgent(Agent):
         """
         
         async def run(self):
+            # Recolocar eventos de trânsito na heap no início
+            for transit_event in self.agent.transit_events:
+                heapq.heappush(self.agent.event_heap, transit_event)
+            
             print(f"\n{'='*70}")
             print(f"[{self.agent.name}] 🔄 PROCESSANDO EVENTOS")
             print(f"[{self.agent.name}] Tempo de simulação: {self.agent.simulation_interval}s")
             print(f"[{self.agent.name}] Eventos na heap: {len(self.agent.event_heap)}")
+            print(f"[{self.agent.name}] Eventos de trânsito: {len(self.agent.transit_events)}")
             print(f"{'='*70}\n")
             
             if not self.agent.event_heap:
                 print(f"[{self.agent.name}] ℹ️  Nenhum evento para processar\n")
                 return
             
-            # Processar todos os eventos da heap
-            transit_events = []  # Eventos de trânsito para reprocessar
-            events_to_notify = []  # Eventos a notificar
+            # Tirar apenas o primeiro evento da heap (menor tempo)
+            first_event = heapq.heappop(self.agent.event_heap)
+            event_time = first_event.time
             
-            while self.agent.event_heap:
-                event = heapq.heappop(self.agent.event_heap)
-                
-                if event.event_type == "transit" or event.event_type == "Transit":
-                    # Eventos de trânsito: reduzir tempo e recolocar na heap
-                    event.time -= self.agent.simulation_interval
-                    
-                    if event.time > 0:
-                        # Ainda tem tempo restante - recolocar na heap
-                        transit_events.append(event)
-                        print(f"[{self.agent.name}] 🔄 Trânsito mantido: {event} (tempo restante: {event.time:.2f}s)")
-                    else:
-                        # Tempo esgotado - notificar
-                        events_to_notify.append(event)
-                        print(f"[{self.agent.name}] ✅ Trânsito finalizado: {event}")
-                else:
-                    # Outros eventos: notificar imediatamente
-                    events_to_notify.append(event)
-                    print(f"[{self.agent.name}] 📤 Evento para notificar: {event}")
+            print(f"[{self.agent.name}] 📤 Processando evento: {first_event}")
             
-            # Recolocar eventos de trânsito com tempo restante na heap
-            for event in transit_events:
-                heapq.heappush(self.agent.event_heap, event)
+            # Se o primeiro evento for de trânsito, remover da lista de trânsito
+            if first_event.event_type == "transit" or first_event.event_type == "Transit":
+                if first_event in self.agent.transit_events:
+                    self.agent.transit_events.remove(first_event)
+                    print(f"[{self.agent.name}] 🗑️  Evento de trânsito removido da lista")
             
-            # Notificar todos os veículos sobre os eventos
-            if events_to_notify:
-                await self.notify_events(events_to_notify)
+            # Atualizar tempo de todos os eventos de trânsito
+            updated_transit_events = []
+            for transit_event in self.agent.transit_events:
+                transit_event.time -= event_time
             
-            self.agent.processed_count += len(events_to_notify)
+                # Ainda tem tempo restante - manter na lista
+                updated_transit_events.append(transit_event)
+                print(f"[{self.agent.name}] 🔄 Trânsito atualizado: {transit_event} (tempo restante: {transit_event.time:.2f}s)")
+            
+            # Atualizar lista de eventos de trânsito
+            self.agent.transit_events = updated_transit_events
+            
+            # Esvaziar a heap (descartar outros eventos)
+            discarded_count = len(self.agent.event_heap)
+            self.agent.event_heap = []
+            
+            if discarded_count > 0:
+                print(f"[{self.agent.name}] 🗑️  Heap esvaziada: {discarded_count} eventos descartados")
+            
+            # Notificar todos os veículos sobre o primeiro evento
+            await self.notify_events([first_event])
+            
+            self.agent.processed_count += 1
             
             print(f"\n[{self.agent.name}] 📊 Estatísticas:")
-            print(f"   Eventos notificados: {len(events_to_notify)}")
-            print(f"   Trânsitos mantidos: {len(transit_events)}")
-            print(f"   Eventos restantes na heap: {len(self.agent.event_heap)}")
+            print(f"   Evento notificado: {first_event.event_type}")
+            print(f"   Tempo do evento: {event_time:.2f}s")
+            print(f"   Eventos descartados: {discarded_count}")
+            print(f"   Trânsitos ativos: {len(self.agent.transit_events)}")
             print(f"   Total recebido: {self.agent.event_count}")
             print(f"   Total processado: {self.agent.processed_count}")
             print(f"{'='*70}\n")
         
         async def notify_events(self, events: List[Event]):
             """
-            Notifica todos os veículos registrados sobre os eventos.
+            Notifica os agentes apropriados sobre os eventos.
+            - Transit: notifica veículos, warehouses e stores
+            - arrival: notifica apenas veículos
+            - updatesimulation: notifica apenas agente do mundo
             """
-            print(f"\n[{self.agent.name}] 📢 Notificando {len(self.agent.registered_vehicles)} veículos sobre {len(events)} eventos")
-            
-            for vehicle_jid in self.agent.registered_vehicles:
-                for event in events:
-                    msg = Message(to=vehicle_jid)
+            for event in events:
+                recipients = []
+                
+                # Determinar destinatários baseado no tipo de evento
+                if event.event_type == "transit" or event.event_type == "Transit":
+                    # Trânsito: veículos + warehouses + stores
+                    recipients = (self.agent.registered_vehicles + 
+                                self.agent.registered_warehouses + 
+                                self.agent.registered_stores)
+                    print(f"\n[{self.agent.name}] 📢 Notificando evento TRANSIT para {len(recipients)} agentes")
+                
+                elif event.event_type == "arrival":
+                    # Chegada: apenas veículos
+                    recipients = self.agent.registered_vehicles
+                    print(f"\n[{self.agent.name}] 📢 Notificando evento ARRIVAL para {len(recipients)} veículos")
+                
+                elif event.event_type == "updatesimulation":
+                    # Update: apenas agente do mundo
+                    if self.agent.world_agent:
+                        recipients = [self.agent.world_agent]
+                        print(f"\n[{self.agent.name}] 📢 Notificando evento UPDATESIMULATION para agente do mundo")
+                    else:
+                        print(f"\n[{self.agent.name}] ⚠️  Agente do mundo não registrado, evento ignorado")
+                        continue
+                
+                # Enviar mensagem para todos os destinatários
+                for recipient_jid in recipients:
+                    msg = Message(to=recipient_jid)
                     msg.set_metadata("performative", "inform")
                     msg.set_metadata("event_type", event.event_type)
                     msg.body = json.dumps(event.to_dict())
                     
                     await self.send(msg)
-                    print(f"[{self.agent.name}]   → {vehicle_jid.split('@')[0]}: {event.event_type}")
+                    recipient_name = recipient_jid.split('@')[0]
+                    print(f"[{self.agent.name}]   → {recipient_name}: {event.event_type}")
     
-    class RegisterVehiclesBehaviour(CyclicBehaviour):
-        """
-        Behaviour para registrar veículos que querem receber notificações de eventos.
-        """
-        
-        async def run(self):
-            msg = await self.receive(timeout=1)
-            
-            if msg and msg.get_metadata("performative") == "subscribe":
-                vehicle_jid = str(msg.sender)
-                
-                if vehicle_jid not in self.agent.registered_vehicles:
-                    self.agent.registered_vehicles.add(vehicle_jid)
-                    print(f"\n[{self.agent.name}] ✅ Veículo registrado: {vehicle_jid}")
-                    print(f"[{self.agent.name}] Total de veículos: {len(self.agent.registered_vehicles)}\n")
-                    
-                    # Enviar confirmação
-                    reply = msg.make_reply()
-                    reply.set_metadata("performative", "inform")
-                    reply.body = json.dumps({
-                        "status": "registered",
-                        "simulation_interval": self.agent.simulation_interval
-                    })
-                    await self.send(reply)
-                
-            elif msg and msg.get_metadata("performative") == "unsubscribe":
-                vehicle_jid = str(msg.sender)
-                
-                if vehicle_jid in self.agent.registered_vehicles:
-                    self.agent.registered_vehicles.remove(vehicle_jid)
-                    print(f"\n[{self.agent.name}] ❌ Veículo removido: {vehicle_jid}")
-                    print(f"[{self.agent.name}] Total de veículos: {len(self.agent.registered_vehicles)}\n")
 
 
 async def main():
