@@ -384,7 +384,7 @@ class Store(Agent):
 
         behav = self.ReceiveTimeDelta()
         template : Template = Template()
-        # TODO -- set template metadata
+        template.set_metadata("performative", "time-delta")
         self.add_behaviour(behav, template)
         
         # Buy retrying is not bound by ticks
@@ -442,6 +442,8 @@ async def main():
     store_agent.add_behaviour(retry_behav)
     
     await asyncio.sleep(2)
+    
+    
     
     await spade.wait_until_finished(store_agent)
     
