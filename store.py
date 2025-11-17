@@ -51,8 +51,8 @@ class Store(Agent):
             agent : Store = self.agent
             contacts = list(agent.presence.contacts.keys())
             
-            # Get request_id before sending
-            request_id_for_template = agent.request_counter
+            # Get request_id before sending - use ID encoding
+            request_id_for_template = agent.id_base + agent.request_counter
             agent.request_counter += 1
             
             msg = None  # Will store the last sent message for current_buy_request
@@ -314,7 +314,7 @@ class Store(Agent):
         async def run(self):
             agent : Store = self.agent
             
-            for self.time_passed in range(config.STORE_BUY_FREQUENCY):
+            for i in range(0, self.time_passed, config.STORE_BUY_FREQUENCY):
                 roll : float = random.randint(1,100) / 100.0
                 if roll < self.buy_prob:
                     product = random.choice(self.product_list)
@@ -370,8 +370,17 @@ class Store(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
+        
+        # Extract instance number from JID for ID encoding (e.g., "store1@localhost" -> 1)
+        jid_name = str(jid).split('@')[0]
+        instance_id = int(''.join(filter(str.isdigit, jid_name)))
+        
+        # Calculate ID base: Store type code = 1
+        self.id_base = (1 * 100_000_000) + (instance_id * 1_000_000)
     
     async def setup(self):
+        self.presence.approve_all = True
+        
         self.stock = {}
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()

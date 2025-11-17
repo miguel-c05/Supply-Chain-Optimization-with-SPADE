@@ -11,29 +11,38 @@ This document details the message structures and operation sequences for all age
 ## Store ↔ Warehouse Protocol
 
 ### Overview
-Three-way handshake protocol where stores request products from warehouses.
+Multi-response selection protocol where stores request products from MULTIPLE warehouses simultaneously, collect all responses, score them, select the best warehouse, and send denials to non-selected warehouses to unlock their stock.
 
 ### Message Flow
 
 ```
-Store                           Warehouse
-  |                                 |
-  |  1. store-buy (request)         |
-  |-------------------------------->|
-  |                                 |
-  |                                 | (Lock stock)
-  |                                 |
-  |  2. warehouse-accept            |
-  |<--------------------------------|
-  |                                 |
-  | (Update stock)                  |
-  |                                 |
-  |  3. store-confirm               |
-  |-------------------------------->|
-  |                                 |
-  |                                 | (Update locked stock,
-  |                                 |  add to pending_orders)
-  |                                 |
+Store                    Warehouse1              Warehouse2              Warehouse3
+  |                           |                       |                       |
+  |  1. store-buy (broadcast) |                       |                       |
+  |-------------------------->|---------------------->|---------------------->|
+  |                           |                       |                       |
+  |                           | (Lock stock)          | (Lock stock)          | (Check stock - insufficient)
+  |                           |                       |                       |
+  |  2. warehouse-accept      |                       |                       |
+  |<--------------------------|                       |                       |
+  |                           |                       |                       |
+  |  2. warehouse-accept      |                       |                       |
+  |<--------------------------------------------------|                       |
+  |                           |                       |                       |
+  |  2. warehouse-reject      |                       |                       |
+  |<----------------------------------------------------------------------|
+  |                           |                       |                       |
+  | (Score acceptances,       |                       |                       |
+  |  select best)             |                       |                       |
+  |                           |                       |                       |
+  |  3. store-confirm (winner)|                       |                       |
+  |<--------------------------------------------------|                       |
+  |                           |                       |                       |
+  |  4. store-deny (loser)    |                       |                       |
+  |-------------------------->|                       |                       |
+  |                           |                       |                       |
+  |                           | (Unlock stock)        | (Update stock,        |
+  |                           |                       |  add to pending)      |
 ```
 
 ### 1. `store-buy` (Request)
@@ -110,10 +119,13 @@ Store                           Warehouse
 ```
 
 **Store Action:**
-- Receive acceptance
-- Calculate score using warehouse node_id for distance
+- Receive acceptance(s) from one or more warehouses
+- Collect ALL responses (acceptances and rejections) within timeout
+- Calculate score for each accepting warehouse using node_id for distance
+- Select warehouse with LOWEST score (best option)
 - Update own stock (add received quantity)
-- Send confirmation
+- Send confirmation to SELECTED warehouse
+- Send denial to ALL OTHER accepting warehouses to unlock their stock
 
 ---
 
@@ -152,12 +164,54 @@ Store                           Warehouse
 ```
 
 **Warehouse Action:**
+- Receive confirmation from store
 - Unlock stock (remove from locked_stock)
-- Add to pending_orders for vehicle pickup
+- Add to pending_orders (as Order object) for vehicle pickup
 
 ---
 
-### 4. `warehouse-reject` (Rejection)
+### 4. `store-deny` (Denial)
+
+**Direction:** Store → Warehouse
+
+**Metadata:**
+```json
+{
+  "performative": "store-deny",
+  "warehouse_id": "warehouse1@localhost",
+  "store_id": "store1@localhost",
+  "node_id": "5",
+  "request_id": "0"
+}
+```
+
+**Body Format:**
+```
+"{quantity} {product}"
+```
+
+**Example:**
+```json
+{
+  "metadata": {
+    "performative": "store-deny",
+    "warehouse_id": "warehouse1@localhost",
+    "store_id": "store1@localhost",
+    "node_id": "5",
+    "request_id": "0"
+  },
+  "body": "5 A"
+}
+```
+
+**Warehouse Action:**
+- Receive denial (not selected)
+- Unlock stock (locked_stock -= quantity, stock += quantity)
+- Do NOT add to pending_orders
+
+---
+
+### 5. `warehouse-reject` (Rejection)
 
 **Direction:** Warehouse → Store
 
@@ -200,41 +254,56 @@ Store                           Warehouse
 
 ### Timeout Handling
 
-**Store side (RecieveWarehouseAcceptance):**
-- Timeout: 5 seconds
-- Action: Add request to `failed_requests` queue
+**Store side (CollectWarehouseResponses + ReceiveAllResponses):**
+- Timeout: 5 seconds to collect all responses
+- Action: Proceed with responses received before timeout
+- If no acceptances received: Add request to `failed_requests` queue
 
-**Warehouse side (ReceiveConfirmation):**
-- Timeout: 10 seconds
-- Action: Return locked stock to available stock
+**Warehouse side (ReceiveConfirmationOrDenial):**
+- Timeout: 10 seconds to receive either store-confirm or store-deny
+- Action: Unlock stock (assume denied), return to available inventory
 
 ---
 
 ## Warehouse ↔ Supplier Protocol
 
 ### Overview
-Three-way handshake protocol where warehouses request materials from suppliers (infinite stock).
+Multi-response selection protocol where warehouses request materials from MULTIPLE suppliers simultaneously, collect all responses, score them, select the best supplier, and send denials to non-selected suppliers.
 
 ### Message Flow
 
 ```
-Warehouse                       Supplier
-  |                                 |
-  |  1. warehouse-buy (request)     |
-  |-------------------------------->|
-  |                                 |
-  |                                 | (Track supplied quantity)
-  |                                 |
-  |  2. supplier-accept             |
-  |<--------------------------------|
-  |                                 |
-  | (Update stock)                  |
-  |                                 |
-  |  3. warehouse-confirm           |
-  |-------------------------------->|
-  |                                 |
-  |                                 | (Add to pending_deliveries)
-  |                                 |
+Warehouse                Supplier1               Supplier2               Supplier3
+  |                           |                       |                       |
+  |  1. warehouse-buy (broadcast)                     |                       |
+  |-------------------------->|---------------------->|---------------------->|
+  |                           |                       |                       |
+  |                           | (Infinite stock,      | (Infinite stock,      | (Infinite stock,
+  |                           |  track supplied)      |  track supplied)      |  track supplied)
+  |                           |                       |                       |
+  |  2. supplier-accept       |                       |                       |
+  |<--------------------------|                       |                       |
+  |                           |                       |                       |
+  |  2. supplier-accept       |                       |                       |
+  |<--------------------------------------------------|                       |
+  |                           |                       |                       |
+  |  2. supplier-accept       |                       |                       |
+  |<----------------------------------------------------------------------|
+  |                           |                       |                       |
+  | (Score acceptances,       |                       |                       |
+  |  select best)             |                       |                       |
+  |                           |                       |                       |
+  |  3. warehouse-confirm (winner)                    |                       |
+  |<--------------------------------------------------|                       |
+  |                           |                       |                       |
+  |  4. warehouse-deny (loser)|                       |                       |
+  |-------------------------->|                       |                       |
+  |                           |                       |                       |
+  |  4. warehouse-deny (loser)|                       |                       |
+  |<----------------------------------------------------------------------|
+  |                           |                       |                       |
+  |                           | (Log rejection)       | (Add to pending       | (Log rejection)
+  |                           |                       |  deliveries)          |
 ```
 
 ### 1. `warehouse-buy` (Request)
@@ -311,9 +380,13 @@ Warehouse                       Supplier
 ```
 
 **Warehouse Action:**
-- Receive acceptance
+- Receive acceptance(s) from one or more suppliers
+- Collect ALL responses within timeout
+- Calculate score for each accepting supplier using node_id for distance
+- Select supplier with LOWEST score (best option)
 - Update own stock (add received quantity)
-- Send confirmation
+- Send confirmation to SELECTED supplier
+- Send denial to ALL OTHER accepting suppliers
 
 ---
 
@@ -352,19 +425,61 @@ Warehouse                       Supplier
 ```
 
 **Supplier Action:**
-- Add to pending_deliveries for vehicle pickup
+- Receive confirmation from warehouse
+- Add to pending_deliveries[warehouse_jid] for vehicle pickup
+
+---
+
+### 4. `warehouse-deny` (Denial)
+
+**Direction:** Warehouse → Supplier
+
+**Metadata:**
+```json
+{
+  "performative": "warehouse-deny",
+  "supplier_id": "supplier1@localhost",
+  "warehouse_id": "warehouse1@localhost",
+  "node_id": "12",
+  "request_id": "1"
+}
+```
+
+**Body Format:**
+```
+"{quantity} {product}"
+```
+
+**Example:**
+```json
+{
+  "metadata": {
+    "performative": "warehouse-deny",
+    "supplier_id": "supplier1@localhost",
+    "warehouse_id": "warehouse1@localhost",
+    "node_id": "12",
+    "request_id": "1"
+  },
+  "body": "25 A"
+}
+```
+
+**Supplier Action:**
+- Receive denial (not selected)
+- Log rejection (no stock rollback needed - infinite stock)
 
 ---
 
 ### Timeout Handling
 
-**Warehouse side (RecieveSupplierAcceptance):**
-- Timeout: 5 seconds
-- Action: Add request to `failed_requests` queue
+**Warehouse side (CollectSupplierResponses + ReceiveAllSupplierResponses):**
+- Timeout: 5 seconds to collect all responses
+- Action: Proceed with responses received before timeout
+- If no acceptances received: Add request to `failed_requests` queue (if implemented)
 
-**Supplier side (ReceiveWarehouseConfirmation):**
-- Timeout: 10 seconds
-- Action: Log order not confirmed (no rollback needed - infinite stock)
+**Supplier side (ReceiveConfirmationOrDenial):**
+- Timeout: 10 seconds to receive either warehouse-confirm or warehouse-deny
+- Action: Log timeout (no rollback needed - infinite stock)
 
 ---
 
@@ -393,8 +508,16 @@ template.set_metadata("request_id", str(request_id))
 - Essential for vehicle routing optimization
 
 ### 4. **Request Counter Management**
-- Counter incremented **BEFORE** sending message
-- Ensures template matches sent metadata
+- Counter value captured **BEFORE** incrementing
+- Same value used for both message metadata and template filtering
+- Ensures sender and receiver use identical request_id
+- Example:
+  ```python
+  request_id_for_template = agent.request_counter
+  agent.request_counter += 1
+  # Use request_id_for_template for both sending and template
+  msg.set_metadata("request_id", str(request_id_for_template))
+  ```
 
 ### 5. **Body Format Consistency**
 All messages use: `"{quantity} {product}"` (or `"{quantity} {product} {reason}"` for rejections)
@@ -411,7 +534,7 @@ All messages use: `"{quantity} {product}"` (or `"{quantity} {product} {reason}"`
 ## Store Warehouse Selection Protocol
 
 ### Overview
-When a store sends a `store-buy` request to multiple warehouses, it collects ALL responses (accepts and rejects) before making a decision.
+When a store sends a `store-buy` request to multiple warehouses, it collects ALL responses (accepts and rejects) before making a decision. After selecting the best warehouse, it sends denials to others to unlock their stock.
 
 ### Selection Flow
 
@@ -439,15 +562,19 @@ Store                 Warehouse1       Warehouse2       Warehouse3
   | - Warehouse1: 42.5    |                |                |
   | - Warehouse3: 28.3    |                |                |
   |                       |                |                |
-  | Select best (lowest score)            |                |
+  | Select best (lowest score) = Warehouse3              |
   |                       |                |                |
   | store-confirm         |                |                |
   |<----------------------------------------------------|
+  |                       |                |                |
+  | store-deny            |                |                |
+  |---------------------->|                |                |
+  | (unlock stock)        |                |                |
 ```
 
 ### Warehouse Scoring
 
-**Function:** `Store.calculate_warehouse_score(warehouse_jid, quantity, product, accept_msg)`
+**Function:** `Store.calculate_warehouse_score(accept_msg) -> float`
 
 **Criteria (examples):**
 1. **Distance** (using node_id):

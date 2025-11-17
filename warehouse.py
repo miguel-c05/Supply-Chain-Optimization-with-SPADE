@@ -237,6 +237,14 @@ class Warehouse(Agent):
         def __init__(self, request_id):
             super().__init__()
             self.request_id = request_id
+        
+        def populate_vehicles_from_contacts(self):
+            """Populate vehicles list from presence contacts if empty"""
+            agent : Warehouse = self.agent
+            if not agent.vehicles:
+                agent.vehicles = [jid for jid in agent.presence.contacts.keys() if "vehicle" in str(jid)]
+                if agent.vehicles:
+                    print(f"{agent.jid}> Auto-populated vehicles from contacts: {agent.vehicles}")
             
         def create_call_for_proposal_message(self, to) -> Message:
             self.agent : Warehouse
@@ -248,34 +256,58 @@ class Warehouse(Agent):
             msg.set_metadata("request_id", str(self.request_id))
             
             order = self.agent.pending_orders[self.request_id]
-            msg.body = json.dumps(order.__dict__)   
+            msg.body = json.dumps(order.__dict__)
+            return msg
         
         async def run(self):
             agent : Warehouse = self.agent
+            
+            # Populate vehicles from contacts if list is empty
+            self.populate_vehicles_from_contacts()
+            
+            if not agent.vehicles:
+                print(f"{agent.jid}> ERROR: No vehicles found in contacts!")
+                return
+            
             n_available_vehicles = 0
             away_vehicles = []
+            
             for vehicle_jid in agent.vehicles:
-                state = agent.presence.get_contact_presence(vehicle_jid)
-                
-                if state == PresenceShow.CHAT:
-                    n_available_vehicles += 1
+                # Check if vehicle has presence information available
+                if vehicle_jid in agent.presence.contacts and agent.presence.contacts[vehicle_jid].is_available():
+                    state = agent.presence.get_contact_presence(vehicle_jid)
+                    
+                    if state == PresenceShow.CHAT:
+                        n_available_vehicles += 1
+                        msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
+                        await self.send(msg)
+                        print(f"{agent.jid}> Sent order proposal to {vehicle_jid} (AVAILABLE)")
+                        
+                    elif state == PresenceShow.AWAY:
+                        away_vehicles.append(vehicle_jid)
+                        print(f"{agent.jid}> Vehicle {vehicle_jid} is AWAY (busy)")
+                else:
+                    # No presence info available, send proposal anyway
+                    print(f"{agent.jid}> No presence info for {vehicle_jid}. Sending proposal anyway.")
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
-                    
                     await self.send(msg)
-                    
-                elif state == PresenceShow.AWAY and n_available_vehicles == 0:
-                    away_vehicles.append(vehicle_jid)
+                    n_available_vehicles += 1
             
             # If there are no available vehicles, try to contact away vehicles
-            if n_available_vehicles == 0:
+            if n_available_vehicles == 0 and away_vehicles:
+                print(f"{agent.jid}> No available vehicles. Trying AWAY vehicles: {away_vehicles}")
                 for vehicle_jid in away_vehicles:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     
                     await self.send(msg)
+            
+            if n_available_vehicles == 0 and not away_vehicles:
+                print(f"{agent.jid}> WARNING: No vehicles available or contacted!")
                     
             behav = self.agent.ReceiveVehicleProposals()
             temp : Template = Template()
             temp.set_metadata("performative", "vehicle-proposal")
+            temp.set_metadata("warehouse_id", str(agent.jid))
             self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
@@ -350,17 +382,32 @@ class Warehouse(Agent):
             self.quantity = quantity
             self.product = product
         
+        def populate_suppliers_from_contacts(self):
+            """Populate suppliers list from presence contacts if empty"""
+            agent : Warehouse = self.agent
+            if not agent.suppliers:
+                agent.suppliers = [jid for jid in agent.presence.contacts.keys() if "supplier" in str(jid)]
+                if agent.suppliers:
+                    print(f"{agent.jid}> Auto-populated suppliers from contacts: {agent.suppliers}")
+        
         async def run(self):
             agent : Warehouse = self.agent
-            contacts = list(agent.presence.contacts.keys())
             
-            # Get request_id before sending
-            request_id_for_template = agent.request_counter
+            # Populate suppliers from contacts if list is empty
+            self.populate_suppliers_from_contacts()
+            
+            if not agent.suppliers:
+                print(f"{agent.jid}> ERROR: No suppliers found in contacts!")
+                return
+            
+            # Get request_id before sending - use ID encoding
+            request_id_for_template = agent.id_base + agent.request_counter
             agent.request_counter += 1
             
             msg = None  # Will store the last sent message for current_buy_request
-            for contact in contacts:
-                msg = Message(to=contact)
+            # Only send to suppliers, not all contacts
+            for supplier_jid in agent.suppliers:
+                msg = Message(to=supplier_jid)
                 msg.set_metadata("performative", "warehouse-buy")
                 msg.set_metadata("warehouse_id", str(agent.jid))
                 msg.set_metadata("request_id", str(request_id_for_template))
@@ -380,7 +427,7 @@ class Warehouse(Agent):
                 behav = agent.CollectSupplierResponses(
                     msg, 
                     request_id_for_template, 
-                    len(contacts),
+                    len(agent.suppliers),
                     self.quantity,
                     self.product
                 )
@@ -675,9 +722,7 @@ class Warehouse(Agent):
                         agent.stock[product] = quantity
                     
                     print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
-                    agent.print_stock()               
-                
-                
+                    agent.print_stock()                            
     
     class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
@@ -703,9 +748,9 @@ class Warehouse(Agent):
         """
         
         supplier_node_id = int(accept_msg.get_metadata("node_id"))
-        path, score = self.map.djikstra(supplier_node_id, self.node_id)
+        path, fuel, time = self.map.djikstra(supplier_node_id, self.node_id)
         
-        return score
+        return time  # Use time as score (could also use fuel)
 
     def message_to_order(self, msg : Message) -> Order:
         """
@@ -721,15 +766,13 @@ class Warehouse(Agent):
         receiver = str(self.jid)  # Warehouse JID
         store_location = int(msg.get_metadata("node_id"))
         warehouse_location = self.node_id
-        tick = self.current_tick
         
         order = Order(
             product=product,
             quantity=quantity,
             orderid=order_id,
             sender=sender,
-            receiver=receiver,
-            tick_received=tick
+            receiver=receiver
         )
         
         # Set locations
@@ -766,11 +809,10 @@ class Warehouse(Agent):
             quantity=data["quantity"],
             orderid=data["orderid"],
             sender=data["sender"],
-            receiver=data["receiver"],
-            sender_location=data["sender_location"],
-            receiver_location=data["receiver_location"],
-            tick_received=data.get("tick_received", 0)
+            receiver=data["receiver"]
         )
+        order.sender_location = data.get("sender_location")
+        order.receiver_location = data.get("receiver_location")
         return order
     # ------------------------------------------
     
@@ -778,8 +820,17 @@ class Warehouse(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
+        
+        # Extract instance number from JID for ID encoding (e.g., "warehouse1@localhost" -> 1)
+        jid_name = str(jid).split('@')[0]
+        instance_id = int(''.join(filter(str.isdigit, jid_name)))
+        
+        # Calculate ID base: Warehouse type code = 2
+        self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
     
     async def setup(self):
+        self.presence.approve_all = True
+        
         # Initialize stock and time
         self.stock = {}
         self.current_tick = 0
@@ -803,9 +854,12 @@ class Warehouse(Agent):
         
         # Identify vehicles from presence contacts
         self.vehicles = []
+        self.suppliers  = []
         for vehicle in self.presence.contacts.keys():
             if "vehicle" in str(vehicle):
                 self.vehicles.append(vehicle)
+            if "supplier" in str(vehicle):
+                self.suppliers.append(vehicle)
         
         # Run ReceiveBuyRequest behaviour
         behav = self.ReceiveBuyRequest()
@@ -820,23 +874,20 @@ class Warehouse(Agent):
         # Run ReceiveVehicleArrival behaviour for pickups
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-pickup")
         self.add_behaviour(behav, template)
         
         # Run ReceiveVehicleArrival behaviour for deliveries
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-delivery")
         self.add_behaviour(behav, template)
-
-
-"""
-=================================
-        MAIN FOR TESTING
-=================================
-"""
+        
+        # Run ReceiveTimeDelta
+        behav = self.ReceiveTimeDelta()
+        template = Template()
+        template.set_metadata("performative", "time-delta")
+        self.add_behaviour(behav, template)
 
 """
 =================================
@@ -962,7 +1013,6 @@ async def main():
                 "receiver": order.receiver,
                 "sender_location": order.sender_location,
                 "receiver_location": order.receiver_location,
-                "tick_received": order.tick_received,
                 "can_fit": True,
                 "delivery_time": 25
             }
@@ -993,7 +1043,6 @@ async def main():
                 "receiver": order.receiver,
                 "sender_location": order.sender_location,
                 "receiver_location": order.receiver_location,
-                "tick_received": order.tick_received,
                 "can_fit": True,
                 "delivery_time": 15  # Faster!
             }
@@ -1033,8 +1082,7 @@ async def main():
                     "sender": order.sender,
                     "receiver": order.receiver,
                     "sender_location": order.sender_location,
-                    "receiver_location": order.receiver_location,
-                    "tick_received": order.tick_received
+                    "receiver_location": order.receiver_location
                 }
                 msg.body = json.dumps(order_dict)
                 
@@ -1068,8 +1116,7 @@ async def main():
                 "sender": f"supplier{supplier_node}@localhost",
                 "receiver": f"warehouse{warehouse_node}@localhost",
                 "sender_location": supplier_node,
-                "receiver_location": warehouse_node,
-                "tick_received": 0
+                "receiver_location": warehouse_node
             }
             
             msg = Message(to=f"warehouse{warehouse_node}@localhost")
@@ -1139,7 +1186,6 @@ async def main():
                 "receiver": order.receiver,
                 "sender_location": order.sender_location,
                 "receiver_location": order.receiver_location,
-                "tick_received": order.tick_received,
                 "can_fit": False,
                 "delivery_time": 10
             }
@@ -1165,7 +1211,6 @@ async def main():
                 "receiver": order.receiver,
                 "sender_location": order.sender_location,
                 "receiver_location": order.receiver_location,
-                "tick_received": order.tick_received,
                 "can_fit": True,
                 "delivery_time": 20
             }
