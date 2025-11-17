@@ -68,7 +68,7 @@ class Warehouse(Agent):
                 
                 request_id is in metadata["request_id"]
                 """
-                request_id = int(msg.get_metadata("request_id"))
+                request_id = msg.get_metadata("request_id")
                 request = msg.body.split(" ")
                 quant = int(request[0])
                 product = request[1]
@@ -98,7 +98,7 @@ class Warehouse(Agent):
     class AcceptBuyRequest(OneShotBehaviour):
         def __init__(self, msg : Message):
             super().__init__()
-            self.request_id = int(msg.get_metadata("request_id"))
+            self.request_id = msg.get_metadata("request_id")
             request = msg.body.split(" ")
             self.quant = int(request[0])
             self.product = request[1]
@@ -120,7 +120,7 @@ class Warehouse(Agent):
             msg.set_metadata("warehouse_id", str(agent.jid))
             msg.set_metadata("store_id", str(self.sender))
             msg.set_metadata("node_id", str(agent.node_id))
-            msg.set_metadata("request_id", str(self.request_id))
+            msg.set_metadata("request_id", self.request_id)
             msg.body = f"{self.quant} {self.product}"
             
             await self.send(msg)
@@ -132,7 +132,7 @@ class Warehouse(Agent):
             template = Template()
             template.set_metadata("warehouse_id", str(agent.jid))
             template.set_metadata("store_id", str(self.sender))
-            template.set_metadata("request_id", str(self.request_id))
+            template.set_metadata("request_id", self.request_id)
             
             agent.add_behaviour(confirm_deny_behav, template)
             print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation or denial...")
@@ -143,7 +143,7 @@ class Warehouse(Agent):
     class RejectBuyRequest(OneShotBehaviour):
         def __init__(self, msg : Message, reason : str = "insufficient_stock"):
             super().__init__()
-            self.request_id = int(msg.get_metadata("request_id"))
+            self.request_id = msg.get_metadata("request_id")
             request = msg.body.split(" ")
             self.quant = int(request[0])
             self.product = request[1]
@@ -166,7 +166,7 @@ class Warehouse(Agent):
             msg.set_metadata("warehouse_id", str(agent.jid))
             msg.set_metadata("store_id", str(self.sender))
             msg.set_metadata("node_id", str(agent.node_id))
-            msg.set_metadata("request_id", str(self.request_id))
+            msg.set_metadata("request_id", self.request_id)
             msg.body = f"{self.quant} {self.product} {self.reason}"
             
             await self.send(msg)
@@ -176,7 +176,7 @@ class Warehouse(Agent):
     class ReceiveConfirmationOrDenial(OneShotBehaviour):
         def __init__(self, accept_msg : Message, sender_jid):
             super().__init__()
-            self.accepted_id = int(accept_msg.get_metadata("request_id"))
+            self.accepted_id = accept_msg.get_metadata("request_id")
             bod = accept_msg.body.split(" ")
             self.accepted_quantity = int(bod[0])
             self.accepted_product = bod[1]
@@ -354,8 +354,8 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
             contacts = list(agent.presence.contacts.keys())
             
-            # Get request_id before sending
-            request_id_for_template = agent.request_counter
+            # Get request_id before sending - use ID encoding
+            request_id_for_template = agent.id_base + agent.request_counter
             agent.request_counter += 1
             
             msg = None  # Will store the last sent message for current_buy_request
@@ -363,7 +363,7 @@ class Warehouse(Agent):
                 msg = Message(to=contact)
                 msg.set_metadata("performative", "warehouse-buy")
                 msg.set_metadata("warehouse_id", str(agent.jid))
-                msg.set_metadata("request_id", str(request_id_for_template))
+                msg.set_metadata("request_id", request_id_for_template)
                 msg.set_metadata("node_id", str(agent.node_id))
                 msg.body = f"{self.quantity} {self.product}"
                 
@@ -549,7 +549,7 @@ class Warehouse(Agent):
             msg.set_metadata("supplier_id", str(self.dest))
             msg.set_metadata("warehouse_id", str(agent.jid))
             msg.set_metadata("node_id", str(agent.node_id))
-            msg.set_metadata("request_id", str(self.request_id))
+            msg.set_metadata("request_id", self.request_id)
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
@@ -573,7 +573,7 @@ class Warehouse(Agent):
             msg.set_metadata("supplier_id", str(self.dest))
             msg.set_metadata("warehouse_id", str(agent.jid))
             msg.set_metadata("node_id", str(agent.node_id))
-            msg.set_metadata("request_id", str(self.request_id))
+            msg.set_metadata("request_id", self.request_id)
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
@@ -592,7 +592,7 @@ class Warehouse(Agent):
                 for contact in contacts:
                     msg : Message = Message(to=contact)
                     agent.set_buy_metadata(msg)
-                    msg.set_metadata("request_id", str(request_id))
+                    msg.set_metadata("request_id", request_id)
                     msg.body = request.body
 
                     print(f"{agent.jid}> Retrying request (id={request_id}):"
@@ -604,7 +604,7 @@ class Warehouse(Agent):
                 template = Template()
                 template.set_metadata("performative", "supplier-accept")
                 template.set_metadata("warehouse_id", str(agent.jid))
-                template.set_metadata("request_id", str(request_id))
+                template.set_metadata("request_id", request_id)
                 agent.add_behaviour(behav, template)
 
                 await behav.join()
@@ -675,9 +675,7 @@ class Warehouse(Agent):
                         agent.stock[product] = quantity
                     
                     print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
-                    agent.print_stock()               
-                
-                
+                    agent.print_stock()                            
     
     class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
@@ -778,6 +776,13 @@ class Warehouse(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
+        
+        # Extract instance number from JID for ID encoding (e.g., "warehouse1@localhost" -> 1)
+        jid_name = str(jid).split('@')[0]
+        instance_id = int(''.join(filter(str.isdigit, jid_name)))
+        
+        # Calculate ID base: Warehouse type code = 2
+        self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
     
     async def setup(self):
         # Initialize stock and time
@@ -820,23 +825,20 @@ class Warehouse(Agent):
         # Run ReceiveVehicleArrival behaviour for pickups
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-pickup")
         self.add_behaviour(behav, template)
         
         # Run ReceiveVehicleArrival behaviour for deliveries
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-delivery")
         self.add_behaviour(behav, template)
-
-
-"""
-=================================
-        MAIN FOR TESTING
-=================================
-"""
+        
+        # Run ReceiveTimeDelta
+        behav = self.ReceiveTimeDelta()
+        template = Template()
+        template.set_metadata("performative", "time-delta")
+        self.add_behaviour(behav, template)
 
 """
 =================================

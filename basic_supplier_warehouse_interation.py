@@ -10,8 +10,8 @@ async def main():
     graph = world.graph
     
     # Iterate over nodes and instance agents based on node purpose
-    suppliers = []
-    warehouses = []
+    suppliers : list[Supplier] = []
+    warehouses : list[Warehouse] = []
     
     for node_id, node in graph.nodes.items():
         if node.supplier:
