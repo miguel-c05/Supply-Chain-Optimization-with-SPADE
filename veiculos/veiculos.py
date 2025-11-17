@@ -72,6 +72,7 @@ class Veiculo(Agent):
         from spade.template import Template
         
         self.presence.approve_all=True
+        self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
         # TODO: dar presence no event agent 
         # self.presence.subscribe(self.clock_jid)
         
@@ -103,66 +104,62 @@ class Veiculo(Agent):
         async def run(self):
             msg = await self.receive(timeout=1)
             if msg:
-                try:
-                    order_data = json.loads(msg.body)
+                order_data = json.loads(msg.body)
+                
+                # Validar campos obrigatórios
+                required_fields = ["product", "quantity", "orderid", "sender", "receiver", 
+                                    "sender_location", "receiver_location"]
+                if not all(field in order_data for field in required_fields):
+                    print(f"[{self.agent.name}] Mensagem inválida - campos faltando: {order_data}")
+                    return
+                
+                order = Order(
+                    product=order_data["product"],
+                    quantity=order_data["quantity"],
+                    orderid=order_data["orderid"],
+                    sender=order_data["sender"],
+                    receiver=order_data["receiver"]
+                )
+                order.sender_location = order_data["sender_location"]
+                order.receiver_location = order_data["receiver_location"]
+                
+                print(f"[{self.agent.name}] Ordem recebida: {order}")
+                
+                # Calcular informações da ordem (rota, tempo, combustível)
+                order.time_to_deliver(
+                    sender_location=order.sender_location,
+                    receiver_location=order.receiver_location,
+                    map=self.agent.map,
+                    weight=self.agent.weight
+                )
+                
+                # Verificar se consegue encaixar na rota atual
+                can_fit, delivery_time = await self.can_fit_in_current_route(order)
+                
+                # Enviar proposta ao warehouse
+                proposal_msg = Message(to=msg.sender)
+                proposal_msg.set_metadata("performative", "vehicle-proposal")
+                
+                proposal_data = {
+                    "orderid": order.orderid,
+                    "can_fit": can_fit,
+                    "delivery_time": delivery_time,
+                    "vehicle_id": str(self.agent.jid)
+                }
+                proposal_msg.body = json.dumps(proposal_data)
+                await self.send(proposal_msg)
+                
+                print(f"[{self.agent.name}] Proposta enviada - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
                     
-                    # Validar campos obrigatórios
-                    required_fields = ["product", "quantity", "orderid", "sender", "receiver", 
-                                     "sender_location", "receiver_location"]
-                    if not all(field in order_data for field in required_fields):
-                        print(f"[{self.agent.name}] Mensagem inválida - campos faltando: {order_data}")
-                        return
-                    
-                    order = Order(
-                        product=order_data["product"],
-                        quantity=order_data["quantity"],
-                        orderid=order_data["orderid"],
-                        sender=order_data["sender"],
-                        receiver=order_data["receiver"]
-                    )
-                    order.sender_location = order_data["sender_location"]
-                    order.receiver_location = order_data["receiver_location"]
-                    
-                    print(f"[{self.agent.name}] Ordem recebida: {order}")
-                    
-                    # Calcular informações da ordem (rota, tempo, combustível)
-                    order.time_to_deliver(
-                        sender_location=order.sender_location,
-                        receiver_location=order.receiver_location,
-                        map=self.agent.map,
-                        weight=self.agent.weight
-                    )
-                    
-                    # Verificar se consegue encaixar na rota atual
-                    can_fit, delivery_time = await self.can_fit_in_current_route(order)
-                    
-                    # Enviar proposta ao warehouse
-                    proposal_msg = Message(to=msg.sender)
-                    proposal_msg.set_metadata("performative", "vehicle-proposal")
-                    
-                    proposal_data = {
-                        "orderid": order.orderid,
-                        "can_fit": can_fit,
-                        "delivery_time": delivery_time,
-                        "vehicle_id": str(self.agent.jid)
-                    }
-                    proposal_msg.body = json.dumps(proposal_data)
-                    await self.send(proposal_msg)
-                    
-                    print(f"[{self.agent.name}] Proposta enviada - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
-                    
-                    # Guardar informações no dicionário de confirmações pendentes
-                    self.agent.pending_confirmations[order.orderid] = {
-                        "order": order,
-                        "can_fit": can_fit,
-                        "delivery_time": delivery_time,
-                        "sender_jid": str(msg.sender)
-                    }
-                    
-                    print(f"[{self.agent.name}] Ordem {order.orderid} adicionada às confirmações pendentes. Total: {len(self.agent.pending_confirmations)}")
-                    
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    print(f"[{self.agent.name}] Erro ao processar mensagem: {e}")
+                # Guardar informações no dicionário de confirmações pendentes
+                self.agent.pending_confirmations[order.orderid] = {
+                    "order": order,
+                    "can_fit": can_fit,
+                    "delivery_time": delivery_time,
+                    "sender_jid": str(msg.sender)
+                }
+                
+                print(f"[{self.agent.name}] Ordem {order.orderid} adicionada às confirmações pendentes. Total: {len(self.agent.pending_confirmations)}")
         
         async def calculate_order_info(self, order: Order):
             """Calcula a rota, tempo e combustível necessários para a ordem"""
@@ -183,8 +180,14 @@ class Veiculo(Agent):
             
             Retorna (pode_encaixar, tempo_de_entrega)
             """
-            # Se não há ordens, pode sempre encaixar
-            if self.agent.presence.get_presence() == PresenceType.AVAILABLE:
+            # Verificar o estado de presença do agente
+            # CHAT = disponível (sem tarefas), AWAY = ocupado (com tarefas)
+            presence_show = self.agent.presence.get_show()
+            
+            print(f"Presence atual - Show: {presence_show}")
+            
+            # Se está em CHAT (disponível), não tem tarefas ativas
+            if presence_show == PresenceShow.CHAT:
                 return True, new_order.deliver_time
             
             # Criar um dicionário com as ordens atuais para acesso rápido
@@ -233,6 +236,7 @@ class Veiculo(Agent):
                     new_order_delivered = True
                     delivery_time = cumulative_time
                     # Entregou o item - pode parar de simular
+                    print(f"Debug1")
                     return True, delivery_time
                 
                 # Processar a ordem existente neste ponto
@@ -259,6 +263,7 @@ class Veiculo(Agent):
                 return False, future_time
             
             # Se entregou, retornar sucesso (não deveria chegar aqui pois retorna no loop)
+            print(f"Debug2")
             return True, delivery_time
         
         async def calculate_future_delivery_time(self, order: Order) -> float:
@@ -294,7 +299,7 @@ class Veiculo(Agent):
         async def recalculate_route(self):
             """Recalcula a rota com todas as ordens atuais"""
             if self.agent.orders:
-                route, fuel, time = await A_star_task_algorithm(
+                route, time , _ = A_star_task_algorithm(
                     self.agent.map,
                     self.agent.current_location,
                     self.agent.orders,
@@ -353,6 +358,16 @@ class Veiculo(Agent):
                             # Adiciona às pending_orders (executar depois)
                             self.agent.pending_orders.append(order)
                             print(f"[{self.agent.name}] Ordem {order.orderid} aceite e adicionada às pending_orders")
+                        
+                        # Atualizar presença para AWAY (ocupado com tarefas)
+                        self.agent.presence.set_presence(
+                            presence_type=PresenceType.AVAILABLE, 
+                            show=PresenceShow.AWAY, 
+                            status="Ocupado com tarefas"
+                        )
+                        print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
+                        print(f"Rota recalculada: {self.agent.actual_route}")
+                        print(f"Orders pendentes: {self.agent.pending_orders}")
                     else:
                         print(f"[{self.agent.name}] Ordem {order.orderid} rejeitada pelo warehouse")
                     
@@ -366,7 +381,7 @@ class Veiculo(Agent):
         async def recalculate_route(self):
             """Recalcula a rota com todas as ordens atuais"""
             if self.agent.orders:
-                route, fuel, time = await A_star_task_algorithm(
+                route, time , _ = A_star_task_algorithm(
                     self.agent.map,
                     self.agent.current_location,
                     self.agent.orders,
@@ -382,20 +397,30 @@ class Veiculo(Agent):
         """
 
         async def run(self):
-            msg = await self.receive(timeout=0.3)
+            # Verificar se o veículo está ocupado (AWAY = tem tarefas)
+
+            
+            msg = await self.receive(timeout=5)  # Timeout maior para não perder mensagens
+
+            presence_show = self.agent.presence.get_show()
+            
+            if presence_show == PresenceShow.CHAT:
+                # Veículo disponível (sem tarefas) - não processa mensagens de movimento
+                return
             if msg:
                 # print a mensagem recebida
-                print(f"[{self.agent.name}] Mensagem recebida: {msg.body}")
-                print(f"Metadata: {msg.metadata}")
+                print(f"[{self.agent.name}] Mensagem recebida no MovementBehaviour")
+                print(f"  Body: {msg.body}")
+                print(f"  Metadata: {msg.metadata}")
+                
                 data = json.loads(msg.body)
                 type = data.get("type")
                 time = data.get("time")
-                veiculo = None
+                veiculo = data.get("vehicle", None)
                 
-                if type == "arrival":
-                    veiculo = data.get("vehicle")
-                    
-                if veiculo == self.agent.name:
+                print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
+                
+                if type == "arrival" and veiculo == self.agent.name:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
                     
@@ -421,7 +446,7 @@ class Veiculo(Agent):
                             return
                         
                         # Há pending orders - calcular nova rota
-                        self.agent.actual_route, _, _ = await A_star_task_algorithm(
+                        self.agent.actual_route, _, _ = A_star_task_algorithm(
                             self.agent.map, 
                             self.agent.current_location,
                             self.agent.pending_orders,
@@ -435,7 +460,7 @@ class Veiculo(Agent):
                     # Calcular próximo nó e tempo restante
                     if self.agent.actual_route:
                         self.agent.next_node = self.agent.actual_route[0][0]
-                        _, _, self.agent.time_to_finish_task = await self.agent.map.djikstra(
+                        _, _ , self.agent.time_to_finish_task = self.agent.map.djikstra(
                             self.agent.current_location,
                             self.agent.next_node
                         )
@@ -444,7 +469,14 @@ class Veiculo(Agent):
                         await self.notify_event_agent(self.agent.time_to_finish_task, self.agent.next_node)
                 else: 
                     # Movimento durante o trânsito
+                    print(f"[{self.agent.name}] Movimento durante o trânsito")
+                    print(f"[{self.agent.name}] Tempo disponível para mover: {time}")
+                    print(f"[{self.agent.name}] localização atual antes de mover: {self.agent.current_location}")
+                    temp_location = self.agent.current_location
                     self.agent.current_location = await self.update_location_and_time(time)
+                    print(f"[{self.agent.name}] localização atual após mover: {self.agent.current_location}")
+                    _, _, tempo_simulado = self.agent.map.djikstra(temp_location, self.agent.current_location)
+                    print(f"[{self.agent.name}] Tempo simulado para mover: {tempo_simulado}")
                     
                 if type == "Transit":
                     # Atualizar mapa com novas informações de trânsito
@@ -452,7 +484,7 @@ class Veiculo(Agent):
                 
                 # Calcular e notificar tempo restante
                 if self.agent.next_node:
-                    _, _, time_left = await self.agent.map.djikstra(
+                    _, _, time_left = self.agent.map.djikstra(
                         self.agent.current_location,
                         self.agent.next_node
                     )
@@ -590,20 +622,29 @@ class Veiculo(Agent):
             Move-se ao longo da rota enquanto houver tempo.
             Se o tempo acabar a meio de dois vértices, volta para o vértice inicial.
             """
-            next_node, _ = self.agent.actual_route[0]
-            route, _ , _ = await self.agent.map.djikstra(self.agent.current_location, next_node)
+            next_node_id, order = self.agent.actual_route[0]
+            if order is None:
+                next_node_id = self.agent.actual_route[1][0]
+            route_nodes, _ , _ = self.agent.map.djikstra(self.agent.current_location, next_node_id)
+            
+            # Converter rota de objetos Node para IDs
+            route = [node.id for node in route_nodes] if route_nodes else []
+            
             remaining_time = time_left
             current_pos = self.agent.current_location
             route_index = 0
             
             # Percorre a rota enquanto houver tempo
             while route_index < len(route) and remaining_time > 0:
-                next_node = route[route_index]
-                if current_pos == next_node:
+                next_node_id = route[route_index]
+                print(f"[{self.agent.name}] Rota atual: {route}")
+                print(f"[{self.agent.name}] Tentando mover para o nó {next_node_id} com tempo restante {remaining_time}")
+                if current_pos == next_node_id:
                     route_index += 1
                     continue
-                #TODO: obter a aresta entre current_pos e next_node
-                edge = await self.agent.map.get_edge(current_pos, next_node)
+                
+                # Obter a aresta entre current_pos e next_node_id
+                edge = self.agent.map.get_edge(current_pos, next_node_id)
                 
                 if edge is None:
                     # Se não há aresta, para
@@ -611,10 +652,11 @@ class Veiculo(Agent):
                 
                 # Tempo necessário para atravessar esta aresta
                 edge_time = edge.weight  # assumindo que weight é o tempo
+                print(f"[{self.agent.name}] Tempo necessário para ir de {current_pos} para {next_node_id}: {edge_time}")
                 
                 if remaining_time >= edge_time:
                     # Tempo suficiente para chegar ao próximo nó
-                    current_pos = next_node
+                    current_pos = next_node_id
                     remaining_time -= edge_time
                     route_index += 1
                 else:

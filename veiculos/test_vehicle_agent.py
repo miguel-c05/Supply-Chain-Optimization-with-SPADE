@@ -74,6 +74,10 @@ class TestWarehouseAgent(Agent):
         # Comportamento para receber notificações de status
         status_behaviour = self.ReceiveStatusBehaviour()
         self.add_behaviour(status_behaviour)
+        
+        # Comportamento para simular chegadas de veículos (teste do MovementBehaviour)
+        arrival_behaviour = self.SimulateArrivalBehaviour(period=10.0)  # A cada 10 segundos
+        self.add_behaviour(arrival_behaviour)
     
     class SendRandomOrdersBehaviour(PeriodicBehaviour):
         """Envia ordens aleatórias para o veículo periodicamente"""
@@ -150,7 +154,7 @@ class TestWarehouseAgent(Agent):
                         print(f"{'*'*60}\n")
                         
                         # Decidir se aceita (80% de chance de aceitar para teste)
-                        accept = random.random() < 0.8
+                        accept = random.random() < 0.3
                         
                         # Enviar confirmação
                         await self.send_confirmation(msg.sender, orderid, accept)
@@ -200,6 +204,48 @@ class TestWarehouseAgent(Agent):
                 
                 except Exception as e:
                     print(f"[{self.agent.name}] Erro ao processar status: {e}")
+    
+    class SimulateArrivalBehaviour(PeriodicBehaviour):
+        """Simula mensagens de chegada (arrival) para testar o MovementBehaviour do veículo"""
+        
+        def __init__(self, period, start_at=None):
+            super().__init__(period, start_at)
+            self.first_run = True  # Flag para controlar a primeira iteração
+        
+        async def run(self):
+            # Na primeira iteração, esperar 20 segundos
+            if self.first_run:
+                print(f"\n[{self.agent.name}] ⏳ Primeira iteração: aguardando 20 segundos...\n")
+                await asyncio.sleep(10)
+                self.first_run = False
+                print(f"\n[{self.agent.name}] ✓ Iniciando envio de mensagens de arrival\n")
+            
+            # 50% de chance de enviar mensagem com o nome correto do veículo
+            # 50% de chance de enviar com nome aleatório (para testar filtro)
+            if random.random() < 0.5:
+                # Usar o nome correto do veículo (extrair de vehicle_jid)
+                vehicle_name = self.agent.vehicle_jid.split("@")[0]
+            else:
+                # Usar nome aleatório
+                vehicle_name = f"vehicle_random_{random.randint(1, 100)}"
+            
+            # Criar mensagem de arrival
+            msg = Message(to=self.agent.vehicle_jid)
+            msg.set_metadata("performative", "inform")
+            
+            data = {
+                "type": "arrival",
+                "vehicle": vehicle_name,
+                "time": round(random.uniform(1.0, 10.0), 2)  # Tempo aleatório para teste
+            }
+            msg.body = json.dumps(data)
+            
+            await self.send(msg)
+            
+            print(f"\n[{self.agent.name}] 📍 ARRIVAL simulado enviado")
+            print(f"  Veículo: {vehicle_name}")
+            print(f"  Correto: {'✓ SIM' if vehicle_name == self.agent.vehicle_jid.split('@')[0] else '✗ NÃO (será ignorado)'}")
+            print(f"  Tempo: {data['time']:.2f}\n")
 
 
 async def main():
@@ -223,7 +269,7 @@ async def main():
     print("\n🌍 Criando o mundo...")
     world = World(
         width=8,
-        height=8,
+        height=4,
         mode="different", 
         max_cost=4, 
         gas_stations=2, 
@@ -236,6 +282,8 @@ async def main():
         traffic_interval=3,
         untraffic_probability=0.4
     )
+    world.plot_graph()
+
     
     print(f"✓ Mundo criado: {world.width}x{world.height}")
     print(f"✓ Nós no grafo: {len(world.graph.nodes)}")
