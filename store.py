@@ -379,6 +379,8 @@ class Store(Agent):
         self.id_base = (1 * 100_000_000) + (instance_id * 1_000_000)
     
     async def setup(self):
+        self.presence.approve_all = True
+        
         self.stock = {}
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()

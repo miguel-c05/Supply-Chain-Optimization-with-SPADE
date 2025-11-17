@@ -177,8 +177,9 @@ class Graph:
             # Sempre retornar (path, fuel, time) para consistência
             return None, 0.0, 0.0
 
-        # Min-heap priority queue (usa weight como critério primário, fuel como desempate)
-        queue = [(0, 0, start_node)]  # (weight_acumulado, fuel_acumulado, node)
+        # Min-heap priority queue (usa weight como critério primário, fuel como desempate, node_id como último desempate)
+        counter = 0  # contador único para desempate no heapq
+        queue = [(0, 0, counter, start_node)]  # (weight_acumulado, fuel_acumulado, counter, node)
         distances = {node: float('inf') for node in self.nodes.values()}
         fuel_consumed = {node: float('inf') for node in self.nodes.values()}
         distances[start_node] = 0
@@ -186,7 +187,7 @@ class Graph:
         previous_nodes = {node: None for node in self.nodes.values()}
 
         while queue:
-            current_distance, current_fuel, current_node = heapq.heappop(queue)
+            current_distance, current_fuel, _, current_node = heapq.heappop(queue)
 
             # Se já encontramos um caminho melhor, ignora
             if current_distance > distances[current_node]:
@@ -211,7 +212,8 @@ class Graph:
                         distances[neighbor] = new_distance
                         fuel_consumed[neighbor] = new_fuel
                         previous_nodes[neighbor] = current_node
-                        heapq.heappush(queue, (new_distance, new_fuel, neighbor))
+                        counter += 1
+                        heapq.heappush(queue, (new_distance, new_fuel, counter, neighbor))
 
         # Reconstruct path
         path = []
