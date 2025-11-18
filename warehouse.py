@@ -7,8 +7,9 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour, PeriodicBehaviour
 from spade.message import Message
 from spade.template import Template
+from spade.presence import PresenceShow
 from world.graph import Graph
-from veiculos.algoritmo_tarefas import Order
+from veiculos.veiculos import Order
 import config
 
 class Warehouse(Agent):
@@ -209,6 +210,9 @@ class Warehouse(Agent):
                     print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
                     print(f"{self.agent.jid}> Order {order.orderid} added to pending orders")
                     print(f"{self.agent.jid}> ReceiveConfirmationOrDenial finished, stock updated.")
+                    
+                    behav = self.agent.AssignVehicle(order.orderid)
+                    self.agent.add_behaviour(behav)
 
                     self.agent.print_stock()
                     
@@ -229,6 +233,146 @@ class Warehouse(Agent):
                 
                 self.agent.print_stock()            
     
+    class AssignVehicle(OneShotBehaviour):
+        def __init__(self, request_id):
+            super().__init__()
+            self.request_id = request_id
+        
+        def populate_vehicles_from_contacts(self):
+            """Populate vehicles list from presence contacts if empty"""
+            agent : Warehouse = self.agent
+            if not agent.vehicles:
+                agent.vehicles = [jid for jid in agent.presence.contacts.keys() if "vehicle" in str(jid)]
+                if agent.vehicles:
+                    print(f"{agent.jid}> Auto-populated vehicles from contacts: {agent.vehicles}")
+            
+        def create_call_for_proposal_message(self, to) -> Message:
+            self.agent : Warehouse
+            
+            msg : Message = Message(to=to)
+            msg.set_metadata("performative", "order-proposal")
+            msg.set_metadata("warehouse_id", str(self.agent.jid))
+            msg.set_metadata("node_id", str(self.agent.node_id))
+            msg.set_metadata("request_id", str(self.request_id))
+            
+            order = self.agent.pending_orders[self.request_id]
+            msg.body = json.dumps(order.__dict__)
+            return msg
+        
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            # Populate vehicles from contacts if list is empty
+            self.populate_vehicles_from_contacts()
+            
+            if not agent.vehicles:
+                print(f"{agent.jid}> ERROR: No vehicles found in contacts!")
+                return
+            
+            n_available_vehicles = 0
+            away_vehicles = []
+            
+            for vehicle_jid in agent.vehicles:
+                # Check if vehicle has presence information available
+                if vehicle_jid in agent.presence.contacts and agent.presence.contacts[vehicle_jid].is_available():
+                    state = agent.presence.get_contact_presence(vehicle_jid)
+                    
+                    if state == PresenceShow.CHAT:
+                        n_available_vehicles += 1
+                        msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
+                        await self.send(msg)
+                        print(f"{agent.jid}> Sent order proposal to {vehicle_jid} (AVAILABLE)")
+                        
+                    elif state == PresenceShow.AWAY:
+                        away_vehicles.append(vehicle_jid)
+                        print(f"{agent.jid}> Vehicle {vehicle_jid} is AWAY (busy)")
+                else:
+                    # No presence info available, send proposal anyway
+                    print(f"{agent.jid}> No presence info for {vehicle_jid}. Sending proposal anyway.")
+                    msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
+                    await self.send(msg)
+                    n_available_vehicles += 1
+            
+            # If there are no available vehicles, try to contact away vehicles
+            if n_available_vehicles == 0 and away_vehicles:
+                print(f"{agent.jid}> No available vehicles. Trying AWAY vehicles: {away_vehicles}")
+                for vehicle_jid in away_vehicles:
+                    msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
+                    
+                    await self.send(msg)
+            
+            if n_available_vehicles == 0 and not away_vehicles:
+                print(f"{agent.jid}> WARNING: No vehicles available or contacted!")
+                    
+            behav = self.agent.ReceiveVehicleProposals()
+            temp : Template = Template()
+            temp.set_metadata("performative", "vehicle-proposal")
+            temp.set_metadata("warehouse_id", str(agent.jid))
+            self.agent.add_behaviour(behav, temp)
+            
+            # Waits for all vehicle proposals to be received
+            await behav.join()
+                    
+    class ReceiveVehicleProposals(OneShotBehaviour):
+        
+        def get_best_vehicle(self, proposals : dict) -> str:
+            # First filter vehicles that can fit the order
+            can_fit_vehicles = {jid: (fit, time) for jid, (fit, time) in proposals.items() if fit}
+
+            if can_fit_vehicles:
+                # If there are vehicles that can fit, choose the one with lowest delivery time
+                best_vehicle = min(can_fit_vehicles.items(), key=lambda x: x[1][1])
+                return best_vehicle[0]
+            else:
+                # If no vehicles can fit, choose the one with lowest delivery time anyway
+                if proposals:
+                    best_vehicle = min(proposals.items(), key=lambda x: x[1][1])
+                    return best_vehicle[0]
+                return None
+        
+        async def run(self):
+            agent : Warehouse = self.agent
+            print(f"{agent.jid}> Collecting vehicle proposals...")
+            
+            proposals = {}  # vehicle_jid : (can_fit, time)
+            
+            while True:
+                msg : Message = await self.receive(timeout=10)
+                
+                if msg:
+                    data = json.loads(msg.body)
+                    order = agent.dict_to_order(data)
+                    
+                    order_id = data["orderid"]
+                    sender_jid = str(msg.sender)
+                    can_fit = data["can_fit"]
+                    time = data["delivery_time"]
+                    
+                    proposals[sender_jid] = (can_fit, time)
+  
+                else: break
+            
+            best_vehicle = self.get_best_vehicle(proposals)
+            
+            if best_vehicle:
+                print(f"{agent.jid}> Best vehicle selected: {best_vehicle}")
+                
+                # Send assignment message to best vehicle
+                msg : Message = Message(to=best_vehicle)
+                msg.set_metadata("performative", "order-confirmation")
+                msg.set_metadata("warehouse_id", str(agent.jid))
+                msg.set_metadata("node_id", str(agent.node_id))
+                msg.set_metadata("request_id", str(order_id))
+                
+                order = agent.pending_orders[order_id]
+                msg.body = json.dumps(order.__dict__)
+                
+                await self.send(msg)
+                
+                print(f"{agent.jid}> Order {order_id} assigned to vehicle {best_vehicle}."
+                      f"All others denied.")
+            
+    
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
     # ------------------------------------------      
@@ -238,17 +382,32 @@ class Warehouse(Agent):
             self.quantity = quantity
             self.product = product
         
+        def populate_suppliers_from_contacts(self):
+            """Populate suppliers list from presence contacts if empty"""
+            agent : Warehouse = self.agent
+            if not agent.suppliers:
+                agent.suppliers = [jid for jid in agent.presence.contacts.keys() if "supplier" in str(jid)]
+                if agent.suppliers:
+                    print(f"{agent.jid}> Auto-populated suppliers from contacts: {agent.suppliers}")
+        
         async def run(self):
             agent : Warehouse = self.agent
-            contacts = list(agent.presence.contacts.keys())
             
-            # Get request_id before sending
-            request_id_for_template = agent.request_counter
+            # Populate suppliers from contacts if list is empty
+            self.populate_suppliers_from_contacts()
+            
+            if not agent.suppliers:
+                print(f"{agent.jid}> ERROR: No suppliers found in contacts!")
+                return
+            
+            # Get request_id before sending - use ID encoding
+            request_id_for_template = agent.id_base + agent.request_counter
             agent.request_counter += 1
             
             msg = None  # Will store the last sent message for current_buy_request
-            for contact in contacts:
-                msg = Message(to=contact)
+            # Only send to suppliers, not all contacts
+            for supplier_jid in agent.suppliers:
+                msg = Message(to=supplier_jid)
                 msg.set_metadata("performative", "warehouse-buy")
                 msg.set_metadata("warehouse_id", str(agent.jid))
                 msg.set_metadata("request_id", str(request_id_for_template))
@@ -268,7 +427,7 @@ class Warehouse(Agent):
                 behav = agent.CollectSupplierResponses(
                     msg, 
                     request_id_for_template, 
-                    len(contacts),
+                    len(agent.suppliers),
                     self.quantity,
                     self.product
                 )
@@ -512,11 +671,11 @@ class Warehouse(Agent):
                     agent.add_behaviour(buy_behav)
                     
                     await buy_behav.join()
-            
-    class AssignVehicle(OneShotBehaviour):
-        async def run(self):
-            pass # TODO - implement if needed
     
+    # ------------------------------------------
+    #         COMMON / OTHER BEHAVIORS
+    # ------------------------------------------
+
     class ReceiveVehicleArrival(CyclicBehaviour):
         """
         Behaviour to receive arrival notifications from vehicles.
@@ -563,9 +722,7 @@ class Warehouse(Agent):
                         agent.stock[product] = quantity
                     
                     print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
-                    agent.print_stock()               
-                
-                
+                    agent.print_stock()                            
     
     class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
@@ -591,9 +748,9 @@ class Warehouse(Agent):
         """
         
         supplier_node_id = int(accept_msg.get_metadata("node_id"))
-        path, score = self.map.djikstra(supplier_node_id, self.node_id)
+        path, fuel, time = self.map.djikstra(supplier_node_id, self.node_id)
         
-        return score
+        return time  # Use time as score (could also use fuel)
 
     def message_to_order(self, msg : Message) -> Order:
         """
@@ -609,15 +766,13 @@ class Warehouse(Agent):
         receiver = str(self.jid)  # Warehouse JID
         store_location = int(msg.get_metadata("node_id"))
         warehouse_location = self.node_id
-        tick = self.current_tick
         
         order = Order(
             product=product,
             quantity=quantity,
             orderid=order_id,
             sender=sender,
-            receiver=receiver,
-            tick_received=tick
+            receiver=receiver
         )
         
         # Set locations
@@ -654,11 +809,10 @@ class Warehouse(Agent):
             quantity=data["quantity"],
             orderid=data["orderid"],
             sender=data["sender"],
-            receiver=data["receiver"],
-            sender_location=data["sender_location"],
-            receiver_location=data["receiver_location"],
-            tick_received=data.get("tick_received", 0)
+            receiver=data["receiver"]
         )
+        order.sender_location = data.get("sender_location")
+        order.receiver_location = data.get("receiver_location")
         return order
     # ------------------------------------------
     
@@ -666,8 +820,17 @@ class Warehouse(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
+        
+        # Extract instance number from JID for ID encoding (e.g., "warehouse1@localhost" -> 1)
+        jid_name = str(jid).split('@')[0]
+        instance_id = int(''.join(filter(str.isdigit, jid_name)))
+        
+        # Calculate ID base: Warehouse type code = 2
+        self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
     
     async def setup(self):
+        self.presence.approve_all = True
+        
         # Initialize stock and time
         self.stock = {}
         self.current_tick = 0
@@ -689,6 +852,15 @@ class Warehouse(Agent):
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()
         
+        # Identify vehicles from presence contacts
+        self.vehicles = []
+        self.suppliers  = []
+        for vehicle in self.presence.contacts.keys():
+            if "vehicle" in str(vehicle):
+                self.vehicles.append(vehicle)
+            if "supplier" in str(vehicle):
+                self.suppliers.append(vehicle)
+        
         # Run ReceiveBuyRequest behaviour
         behav = self.ReceiveBuyRequest()
         template = Template()
@@ -702,17 +874,20 @@ class Warehouse(Agent):
         # Run ReceiveVehicleArrival behaviour for pickups
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-pickup")
         self.add_behaviour(behav, template)
         
         # Run ReceiveVehicleArrival behaviour for deliveries
         behav = self.ReceiveVehicleArrival()
         template = Template()
-        # TODO - set template metadata if needed
         template.set_metadata("performative", "vehicle-delivery")
         self.add_behaviour(behav, template)
-
+        
+        # Run ReceiveTimeDelta
+        behav = self.ReceiveTimeDelta()
+        template = Template()
+        template.set_metadata("performative", "time-delta")
+        self.add_behaviour(behav, template)
 
 """
 =================================
@@ -720,74 +895,354 @@ class Warehouse(Agent):
 =================================
 """
 async def main():
-    # Tente com diferentes credenciais
-    ware_agent = Warehouse("warehouse@localhost", "password",1)
+    from world.world import World
     
-    try:
-        await ware_agent.start(auto_register=True)
-        print("Agent started successfully!")
-    except Exception as e:
-        print(f"Failed to start agent: {e}")
+    # Create a world with suppliers and warehouses
+    world = World(width=2, height=2, warehouses=1, suppliers=1, stores=1, mode="uniform")
+    graph = world.graph
+    
+    # Create warehouse agent
+    warehouse_node = None
+    store_node = None
+    supplier_node = None
+    for node_id, node in graph.nodes.items():
+        if node.warehouse:
+            warehouse_node = node_id
+        if node.store:
+            store_node = node_id
+        if node.supplier:
+            supplier_node = node_id
+    
+    if not warehouse_node:
+        print("ERROR: No warehouse node found!")
         return
     
-    # Simulate both buy requests back-to-back
-    class SendFirstBuyRequest(OneShotBehaviour):
+    warehouse = Warehouse(f"warehouse{warehouse_node}@localhost", "pass", graph, warehouse_node)
+    await warehouse.start(auto_register=True)
+    
+    print(f"✅ Warehouse started at node {warehouse_node}")
+    print(f"Initial stock:")
+    warehouse.print_stock()
+    
+    # Setup presence
+    warehouse.presence.set_available()
+    warehouse.presence.approve_all = True
+    
+    # Subscribe to fake vehicles
+    fake_vehicle1_jid = "vehicle1@localhost"
+    fake_vehicle2_jid = "vehicle2@localhost"
+    warehouse.presence.subscribe(fake_vehicle1_jid)
+    warehouse.presence.subscribe(fake_vehicle2_jid)
+    warehouse.vehicles = [fake_vehicle1_jid, fake_vehicle2_jid]
+    
+    await asyncio.sleep(1)
+    
+    print("\n" + "="*60)
+    print("TEST 1: CREATE PENDING ORDER (STORE REQUEST + CONFIRMATION)")
+    print("="*60)
+    
+    # Simulate store sending order request
+    class SimulateStoreOrder(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(0.5)
+            msg = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg.sender = f"store{store_node}@localhost"
+            msg.set_metadata("performative", "store-buy")
+            msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg.set_metadata("store_id", f"store{store_node}@localhost")
+            msg.set_metadata("node_id", str(store_node))
+            msg.set_metadata("request_id", "0")
+            msg.body = "10 A"
+            
+            await self.send(msg)
+            print(f"📤 Simulated store order: {msg.body}")
+    
+    warehouse.add_behaviour(SimulateStoreOrder())
+    await asyncio.sleep(2)
+    
+    # Simulate store confirmation
+    class SimulateStoreConfirmation(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(0.5)
+            msg = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg.sender = f"store{store_node}@localhost"
+            msg.set_metadata("performative", "store-confirm")
+            msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg.set_metadata("store_id", f"store{store_node}@localhost")
+            msg.set_metadata("node_id", str(store_node))
+            msg.set_metadata("request_id", "0")
+            msg.body = "10 A"
+            
+            await self.send(msg)
+            print(f"📤 Simulated store confirmation: {msg.body}")
+    
+    warehouse.add_behaviour(SimulateStoreConfirmation())
+    await asyncio.sleep(2)
+    
+    # Check pending orders
+    print(f"\n📦 Pending orders: {len(warehouse.pending_orders)}")
+    for order_id, order in warehouse.pending_orders.items():
+        print(f"  Order {order_id}: {order.quantity}x{order.product} "
+              f"to {order.sender} (store location: {order.sender_location})")
+    
+    print("\n" + "="*60)
+    print("TEST 2: SIMULATE MULTIPLE VEHICLE PROPOSALS")
+    print("="*60)
+    
+    await asyncio.sleep(1)
+    
+    # Simulate vehicle proposals (warehouse should have sent order-proposal)
+    class SimulateVehicle1Proposal(OneShotBehaviour):
         async def run(self):
             await asyncio.sleep(1)
-            msg = Message(to="warehouse@localhost")
-            msg.set_metadata("performative", "store-buy")
-            msg.set_metadata("store_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "1")
-            msg.body = "5 A"
+            # Vehicle 1: can fit, delivery time = 25
+            msg = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg.sender = "vehicle1@localhost"
+            msg.set_metadata("performative", "vehicle-proposal")
+            msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg.set_metadata("vehicle_id", "vehicle1@localhost")
+            msg.set_metadata("request_id", "0")
+            
+            # Body is JSON with order data + can_fit + delivery_time
+            order = warehouse.pending_orders[0]
+            proposal_data = {
+                "orderid": order.orderid,
+                "product": order.product,
+                "quantity": order.quantity,
+                "sender": order.sender,
+                "receiver": order.receiver,
+                "sender_location": order.sender_location,
+                "receiver_location": order.receiver_location,
+                "can_fit": True,
+                "delivery_time": 25
+            }
+            msg.body = json.dumps(proposal_data)
+            
             await self.send(msg)
-            print("First buy request sent: 5 units of A")
+            print(f"📤 Vehicle1 proposal: can_fit=True, time=25")
     
-    ware_agent.add_behaviour(SendFirstBuyRequest())
+    warehouse.add_behaviour(SimulateVehicle1Proposal())
     
-    class SendSecondBuyRequest(OneShotBehaviour):
+    class SimulateVehicle2Proposal(OneShotBehaviour):
         async def run(self):
             await asyncio.sleep(1.5)
-            msg = Message(to="warehouse@localhost")
-            msg.set_metadata("performative", "store-buy")
-            msg.set_metadata("store_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "2")
-            msg.body = "3 B"
+            # Vehicle 2: can fit, delivery time = 15 (BEST!)
+            msg = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg.sender = "vehicle2@localhost"
+            msg.set_metadata("performative", "vehicle-proposal")
+            msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg.set_metadata("vehicle_id", "vehicle2@localhost")
+            msg.set_metadata("request_id", "0")
+            
+            order = warehouse.pending_orders[0]
+            proposal_data = {
+                "orderid": order.orderid,
+                "product": order.product,
+                "quantity": order.quantity,
+                "sender": order.sender,
+                "receiver": order.receiver,
+                "sender_location": order.sender_location,
+                "receiver_location": order.receiver_location,
+                "can_fit": True,
+                "delivery_time": 15  # Faster!
+            }
+            msg.body = json.dumps(proposal_data)
+            
             await self.send(msg)
-            print("Second buy request sent: 3 units of B")
+            print(f"📤 Vehicle2 proposal: can_fit=True, time=15 (BEST!)")
     
-    ware_agent.add_behaviour(SendSecondBuyRequest())
+    warehouse.add_behaviour(SimulateVehicle2Proposal())
     
-    # Simulate both confirmations after requests
-    class SendFirstConfirmation(OneShotBehaviour):
+    await asyncio.sleep(3)
+    print("\n✅ Warehouse should have selected vehicle2 (lowest delivery time)")
+    
+    print("\n" + "="*60)
+    print("TEST 3: SIMULATE VEHICLE PICKUP")
+    print("="*60)
+    
+    # Simulate vehicle picking up the order
+    class SimulateVehiclePickup(OneShotBehaviour):
         async def run(self):
-            await asyncio.sleep(3)
-            msg = Message(to="warehouse@localhost")
-            msg.set_metadata("performative", "store-confirm")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")
-            msg.set_metadata("store_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "1")
-            msg.body = "5 A"
-            await self.send(msg)
-            print("First confirmation sent!")
+            await asyncio.sleep(1)
+            if warehouse.pending_orders:
+                order_id = list(warehouse.pending_orders.keys())[0]
+                order = warehouse.pending_orders[order_id]
+                
+                msg = Message(to=f"warehouse{warehouse_node}@localhost")
+                msg.sender = "vehicle2@localhost"
+                msg.set_metadata("performative", "vehicle-pickup")
+                msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+                msg.set_metadata("vehicle_id", "vehicle2@localhost")
+                msg.set_metadata("order_id", str(order_id))
+                
+                order_dict = {
+                    "product": order.product,
+                    "quantity": order.quantity,
+                    "orderid": order.orderid,
+                    "sender": order.sender,
+                    "receiver": order.receiver,
+                    "sender_location": order.sender_location,
+                    "receiver_location": order.receiver_location
+                }
+                msg.body = json.dumps(order_dict)
+                
+                await self.send(msg)
+                print(f"📤 Vehicle2 picking up order {order_id}")
+            else:
+                print("❌ No pending orders to pickup!")
     
-    ware_agent.add_behaviour(SendFirstConfirmation())
+    warehouse.add_behaviour(SimulateVehiclePickup())
+    await asyncio.sleep(2)
     
-    class SendSecondConfirmation(OneShotBehaviour):
+    print(f"\n📦 Pending orders after pickup: {len(warehouse.pending_orders)}")
+    if not warehouse.pending_orders:
+        print("  ✅ Order successfully picked up!")
+    
+    print("\n" + "="*60)
+    print("TEST 4: SIMULATE VEHICLE DELIVERY (SUPPLIER RESTOCK)")
+    print("="*60)
+    
+    print(f"\nStock BEFORE delivery:")
+    warehouse.print_stock()
+    
+    # Simulate vehicle delivering supplies from supplier
+    class SimulateVehicleDelivery(OneShotBehaviour):
         async def run(self):
-            await asyncio.sleep(3.5)
-            msg = Message(to="warehouse@localhost")
-            msg.set_metadata("performative", "store-confirm")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")
-            msg.set_metadata("store_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "2")
-            msg.body = "3 B"
+            await asyncio.sleep(1)
+            delivery_order = {
+                "product": "B",
+                "quantity": 50,
+                "orderid": 999,
+                "sender": f"supplier{supplier_node}@localhost",
+                "receiver": f"warehouse{warehouse_node}@localhost",
+                "sender_location": supplier_node,
+                "receiver_location": warehouse_node
+            }
+            
+            msg = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg.sender = "vehicle1@localhost"
+            msg.set_metadata("performative", "vehicle-delivery")
+            msg.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg.set_metadata("vehicle_id", "vehicle1@localhost")
+            msg.set_metadata("order_id", "999")
+            msg.body = json.dumps(delivery_order)
+            
             await self.send(msg)
-            print("Second confirmation sent!")
+            print(f"📤 Vehicle1 delivering: 50 units of B from supplier")
     
-    ware_agent.add_behaviour(SendSecondConfirmation())
+    warehouse.add_behaviour(SimulateVehicleDelivery())
+    await asyncio.sleep(2)
     
-    await spade.wait_until_finished(ware_agent)
+    print(f"\nStock AFTER delivery:")
+    warehouse.print_stock()
     
+    print("\n" + "="*60)
+    print("TEST 5: VEHICLE THAT CANNOT FIT")
+    print("="*60)
     
+    # Create another order
+    class CreateAnotherOrder(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(0.5)
+            msg1 = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg1.sender = f"store{store_node}@localhost"
+            msg1.set_metadata("performative", "store-buy")
+            msg1.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg1.set_metadata("store_id", f"store{store_node}@localhost")
+            msg1.set_metadata("node_id", str(store_node))
+            msg1.set_metadata("request_id", "1")
+            msg1.body = "5 C"
+            await self.send(msg1)
+            
+            await asyncio.sleep(1)
+            
+            msg2 = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg2.sender = f"store{store_node}@localhost"
+            msg2.set_metadata("performative", "store-confirm")
+            msg2.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg2.set_metadata("store_id", f"store{store_node}@localhost")
+            msg2.set_metadata("node_id", str(store_node))
+            msg2.set_metadata("request_id", "1")
+            msg2.body = "5 C"
+            await self.send(msg2)
+            
+            print(f"📤 Created order: 5 C")
+    
+    warehouse.add_behaviour(CreateAnotherOrder())
+    await asyncio.sleep(3)
+    
+    # Simulate proposals where only one can fit
+    class SimulateCannotFitProposal(OneShotBehaviour):
+        async def run(self):
+            await asyncio.sleep(1)
+            
+            # Vehicle 1: CANNOT FIT
+            order = warehouse.pending_orders[1]
+            proposal1 = {
+                "orderid": order.orderid,
+                "product": order.product,
+                "quantity": order.quantity,
+                "sender": order.sender,
+                "receiver": order.receiver,
+                "sender_location": order.sender_location,
+                "receiver_location": order.receiver_location,
+                "can_fit": False,
+                "delivery_time": 10
+            }
+            
+            msg1 = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg1.sender = "vehicle1@localhost"
+            msg1.set_metadata("performative", "vehicle-proposal")
+            msg1.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg1.set_metadata("vehicle_id", "vehicle1@localhost")
+            msg1.set_metadata("request_id", "1")
+            msg1.body = json.dumps(proposal1)
+            await self.send(msg1)
+            print(f"📤 Vehicle1 proposal: can_fit=FALSE, time=10")
+            
+            await asyncio.sleep(0.5)
+            
+            # Vehicle 2: CAN FIT
+            proposal2 = {
+                "orderid": order.orderid,
+                "product": order.product,
+                "quantity": order.quantity,
+                "sender": order.sender,
+                "receiver": order.receiver,
+                "sender_location": order.sender_location,
+                "receiver_location": order.receiver_location,
+                "can_fit": True,
+                "delivery_time": 20
+            }
+            
+            msg2 = Message(to=f"warehouse{warehouse_node}@localhost")
+            msg2.sender = "vehicle2@localhost"
+            msg2.set_metadata("performative", "vehicle-proposal")
+            msg2.set_metadata("warehouse_id", f"warehouse{warehouse_node}@localhost")
+            msg2.set_metadata("vehicle_id", "vehicle2@localhost")
+            msg2.set_metadata("request_id", "1")
+            msg2.body = json.dumps(proposal2)
+            await self.send(msg2)
+            print(f"📤 Vehicle2 proposal: can_fit=TRUE, time=20")
+    
+    warehouse.add_behaviour(SimulateCannotFitProposal())
+    await asyncio.sleep(3)
+    
+    print("\n✅ Warehouse should have selected vehicle2 (only one that can fit)")
+    
+    print("\n" + "="*60)
+    print("📊 FINAL STATE")
+    print("="*60)
+    print(f"Pending orders: {len(warehouse.pending_orders)}")
+    for order_id, order in warehouse.pending_orders.items():
+        print(f"  Order {order_id}: {order.quantity}x{order.product}")
+    
+    print(f"\nFinal stock:")
+    warehouse.print_stock()
+    
+    await asyncio.sleep(2)
+    await warehouse.stop()
+    print("\n✅ All vehicle interaction tests completed!")
+
 if __name__ == "__main__":
     spade.run(main())

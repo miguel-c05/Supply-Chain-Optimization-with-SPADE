@@ -352,14 +352,16 @@ class World:
         for edge_key in edges_to_remove:
             self.graph.infected_edges.remove(edge_key)
         
-    def tick(self):
+    def get_events(self, delta_time):
         """Avança o estado do mundo em um tick (a implementar)"""
-        # Restaura arestas infectadas
-        self._restore_infected_edges()
+        for i in range(1, delta_time +  1):
 
-        if self.tick_counter % self.traffic_interval == 0:
-            p = random.uniform(0, 1)
-            if p > self.traffic_probability:
-                self.traffic()
+            if i % 2 == 0:
+                self._restore_infected_edges()
 
-        self.tick_counter += 1
+            if self.tick_counter % self.traffic_interval == 0:
+                p = random.uniform(0, 1)
+                if p > self.traffic_probability:
+                    self.traffic()
+
+        self.tick_counter += delta_time

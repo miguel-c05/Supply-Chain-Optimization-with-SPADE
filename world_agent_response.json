@@ -1,0 +1,77 @@
+{
+  "type": "time_delta_response",
+  "delta_time": 5,
+  "final_tick": 5,
+  "edges": [
+    {
+      "node1_id": 27,
+      "node2_id": 20,
+      "new_time": 3.8202,
+      "new_fuel_consumption": 0.155,
+      "instant": 0
+    },
+    {
+      "node1_id": 27,
+      "node2_id": 28,
+      "new_time": 4,
+      "new_fuel_consumption": 0.18,
+      "instant": 0
+    },
+    {
+      "node1_id": 28,
+      "node2_id": 27,
+      "new_time": 4,
+      "new_fuel_consumption": 0.182,
+      "instant": 0
+    },
+    {
+      "node1_id": 34,
+      "node2_id": 27,
+      "new_time": 4,
+      "new_fuel_consumption": 0.088,
+      "instant": 0
+    },
+    {
+      "node1_id": 28,
+      "node2_id": 35,
+      "new_time": 3.8978,
+      "new_fuel_consumption": 0.152,
+      "instant": 0
+    },
+    {
+      "node1_id": 35,
+      "node2_id": 28,
+      "new_time": 2.4485,
+      "new_fuel_consumption": 0.149,
+      "instant": 0
+    },
+    {
+      "node1_id": 36,
+      "node2_id": 37,
+      "new_time": 4,
+      "new_fuel_consumption": 0.175,
+      "instant": 0
+    },
+    {
+      "node1_id": 14,
+      "node2_id": 13,
+      "new_time": 4,
+      "new_fuel_consumption": 0.144,
+      "instant": 3
+    },
+    {
+      "node1_id": 20,
+      "node2_id": 21,
+      "new_time": 3.2508,
+      "new_fuel_consumption": 0.111,
+      "instant": 3
+    },
+    {
+      "node1_id": 36,
+      "node2_id": 29,
+      "new_time": 4,
+      "new_fuel_consumption": 0.09,
+      "instant": 3
+    }
+  ]
+}
