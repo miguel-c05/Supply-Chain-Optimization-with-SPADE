@@ -185,12 +185,16 @@ class Supplier(Agent):
     
     class ReceiveVehicleArrival(CyclicBehaviour):
         def add_metadata(self, r_msg: Message, order : Order) -> Message:
+            self.agent : Supplier
+            
             msg = r_msg
-            msg.set_metadata("performative", "supplier-pickup-confirm")
+            msg.set_metadata("performative", "pickup-confirm")
             msg.set_metadata("supplier_id", str(self.agent.jid))
             msg.set_metadata("warehouse_id", str(order.sender))
             msg.set_metadata("node_id", str(self.agent.node_id))
             msg.set_metadata("request_id", str(order.orderid))
+            msg.body = json.dumps(order.__dict__)
+            return msg
         
         async def run(self):
             agent : Supplier = self.agent
@@ -304,16 +308,20 @@ class Supplier(Agent):
             else:
                 print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
-            behav = self.agent.ReceiveVehicleProposals()
+            behav = self.agent.ReceiveVehicleProposals(self.request_id)
             temp : Template = Template()
             temp.set_metadata("performative", "vehicle-proposal")
             temp.set_metadata("supplier_id", str(agent.jid))
+            temp.set_metadata("request_id", str(self.request_id))
             self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
             await behav.join()
                     
     class ReceiveVehicleProposals(OneShotBehaviour):
+        def __init__(self, request_id):
+            super().__init__()
+            self.request_id = request_id
         
         def get_best_vehicle(self, proposals : dict) -> str:
             # First filter vehicles that can fit the order
@@ -362,17 +370,34 @@ class Supplier(Agent):
             if best_vehicle:
                 print(f"{agent.jid}> 🏆 Best vehicle selected: {best_vehicle}")
                 
-                # Send assignment message to best vehicle
+                # Send confirmation to the selected vehicle
                 msg : Message = Message(to=best_vehicle)
                 msg.set_metadata("performative", "order-confirmation")
                 msg.set_metadata("supplier_id", str(agent.jid))
                 msg.set_metadata("node_id", str(agent.node_id))
                 
                 order = agent.pending_deliveries[order_id]
-                msg.body = json.dumps(order.__dict__)
+                order_data = order.__dict__.copy()
+                order_data["confirmed"] = True  # Add confirmation flag
+                msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
                 print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {order_id}")
+                
+                # Send rejection to all other vehicles
+                rejected_vehicles = [jid for jid in proposals.keys() if jid != best_vehicle]
+                for vehicle_jid in rejected_vehicles:
+                    reject_msg : Message = Message(to=vehicle_jid)
+                    reject_msg.set_metadata("performative", "order-confirmation")
+                    reject_msg.set_metadata("supplier_id", str(agent.jid))
+                    reject_msg.set_metadata("node_id", str(agent.node_id))
+                    
+                    reject_data = order.__dict__.copy()
+                    reject_data["confirmed"] = False  # Rejection flag
+                    reject_msg.body = json.dumps(reject_data)
+                    
+                    await self.send(reject_msg)
+                    print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {order_id}")
             else:
                 print(f"{agent.jid}> ⚠️ No vehicles available to assign!")
     
@@ -510,10 +535,17 @@ class Supplier(Agent):
         print(f"{self.jid}> Supplier initialized with INFINITE stock")
         self.print_stats()
         
+        # Add behaviour to receive buy requests from warehouses
         behav = self.ReceiveBuyRequest()
         template = Template()
         template.set_metadata("performative", "warehouse-buy")
         self.add_behaviour(behav, template)
+        
+        # Add behaviour to receive vehicle pickup notifications
+        pickup_behav = self.ReceiveVehicleArrival()
+        pickup_template = Template()
+        pickup_template.set_metadata("performative", "vehicle-pickup")
+        self.add_behaviour(pickup_behav, pickup_template)
 
 
 """
