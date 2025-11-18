@@ -219,7 +219,7 @@ class Veiculo(Agent):
     """
 
 
-    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int,event_agent_jid):
+    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int,event_agent_jid, verbose : bool = False):
         """
         Inicializa um novo agente veículo.
         
@@ -253,6 +253,7 @@ class Veiculo(Agent):
         self.pending_orders = []
         self.time_to_finish_task = 0
         self.event_agent_jid = event_agent_jid
+        self.verbose = verbose
         
         # Dicionário para armazenar múltiplas ordens aguardando confirmação
         # Key: orderid, Value: dict com order, can_fit, delivery_time, sender_jid
@@ -1131,8 +1132,7 @@ class Veiculo(Agent):
                   }
             """
             msg = Message(to=order.receiver)
-            msg.set_metadata("performative", "inform")
-            msg.set_metadata("type", "order-completed")
+            msg.set_metadata("performative", "vehicle-delivery")
             
             data = {
                 "orderid": order.orderid,

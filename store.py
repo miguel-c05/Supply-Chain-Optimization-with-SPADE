@@ -7,7 +7,9 @@ from spade.behaviour import OneShotBehaviour, PeriodicBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
 from world.graph import Graph
+from veiculos.veiculos import Order
 import config
+import json
 
 class Store(Agent):
     
@@ -225,15 +227,16 @@ class Store(Agent):
             parts = msg.body.split(" ")
             self.quantity = int(parts[0])
             self.product = parts[1]
+            self.msg : Message = msg
             
         
         async def run(self):
             agent : Store = self.agent
             
-            if self.product in self.agent.stock:
-                agent.stock[self.product] += self.quantity
-            else:
-                agent.stock[self.product] = self.quantity           
+            # Don't update stock here - wait for vehicle delivery
+            # Stock will be updated when vehicle-delivery message is received
+            order : Order = agent.message_to_order(self.msg)
+            agent.pending_orders[self.request_id] = order # TODO -- implement pending orders
             
             msg = Message(to=self.dest)
             msg.set_metadata("performative", "store-confirm")
@@ -340,8 +343,42 @@ class Store(Agent):
                 agent.add_behaviour(behav)            
     
     class ReceiveVehicleArrival(CyclicBehaviour):
+        """
+        Behaviour to receive arrival notifications from vehicles.
+        Accepts ONLY: vehicle-pickup, vehicle-delivery
+        """
         async def run(self):
-            pass # TODO - implement if needed
+            agent : Store = self.agent
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg:
+                performative = msg.get_metadata("performative")
+                
+                # Double-check (should already be filtered by templates)
+                if performative not in ["vehicle-pickup", "vehicle-delivery"]:
+                    print(f"{agent.jid}> ERROR: Received unexpected performative '{performative}'")
+                    return
+                
+                # Parse message body
+                try:
+                    data = json.loads(msg.body)
+                    order = agent.dict_to_order(data)
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
+                    return
+
+                # Vehicle is delivering supplies from supplier
+                product = order.product
+                quantity = order.quantity
+                
+                if product in agent.stock:
+                    agent.stock[product] += quantity
+                else:
+                    agent.stock[product] = quantity
+                
+                print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
+                agent.print_stock()    
+
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
     # ------------------------------------------
@@ -353,10 +390,51 @@ class Store(Agent):
         """
         
         warehouse_id = int(accept_msg.get_metadata("node_id"))
-        path, score = self.map.djikstra(warehouse_id, self.node_id)
+        path, fuel, time = self.map.djikstra(warehouse_id, self.node_id)
         
-        return score
-      
+        return time
+    
+    def dict_to_order(self, data : dict) -> Order:
+        order =  Order(
+            product=data["product"],
+            quantity=data["quantity"],
+            orderid=data["orderid"],
+            sender=data["sender"],
+            receiver=data["receiver"]
+        )
+        order.sender_location = data.get("sender_location")
+        order.receiver_location = data.get("receiver_location")
+        return order
+    
+    def message_to_order(self, msg : Message) -> Order:
+        """
+        Convert a store-confirm message to an Order object.
+        """
+        body = msg.body
+        parts = body.split(" ")
+        quantity = int(parts[0])
+        product = parts[1]
+        
+        order_id = int(msg.get_metadata("request_id"))
+        sender = str(msg.sender)  # Store JID
+        receiver = str(self.jid)  # Warehouse JID
+        store_location = int(msg.get_metadata("node_id"))
+        warehouse_location = self.node_id
+        
+        order = Order(
+            product=product,
+            quantity=quantity,
+            orderid=order_id,
+            sender=sender,
+            receiver=receiver
+        )
+        
+        # Set locations
+        order.sender_location = store_location  # Store location
+        order.receiver_location = warehouse_location  # Warehouse location
+        
+        return order
+    
     def set_buy_metadata(self, msg : Message) -> None:
         msg.set_metadata("performative", "store-buy")
         msg.set_metadata("store_id", str(self.jid))
@@ -364,6 +442,15 @@ class Store(Agent):
     
     def update_graph(self, msg : Message) -> None:
         pass # TODO - implement if needed
+    
+    def print_stock(self) -> None:
+        """Print the current stock inventory."""
+        if not self.stock:
+            print(f"{self.jid}> Stock is empty")
+        else:
+            print(f"{self.jid}> Current stock:")
+            for product, quantity in self.stock.items():
+                print(f"  - {product}: {quantity} units")
     # ------------------------------------------
     
     def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
@@ -399,6 +486,12 @@ class Store(Agent):
         # Buy retrying is not bound by ticks
         retry_behav = self.RetryPreviousBuy(period=5)
         self.add_behaviour(retry_behav)
+        
+        # Vehicle arrival behaviour
+        vehicle_behav = self.ReceiveVehicleArrival()
+        temp = Template()
+        temp.set_metadata("performative", "vehicle-delivery")
+        self.add_behaviour(vehicle_behav, temp)
 
 
 async def main():

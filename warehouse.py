@@ -864,6 +864,15 @@ class Warehouse(Agent):
         print(f"Current {self.jid} LOCKED stock:")
         for product, amount in self.locked_stock.items():
             print(f"{product}: {amount}/{self.stock[product] + amount}")
+        print("-"*30)
+                
+        print(f"Current {self.jid} PENDING ORDERS:")
+        if self.pending_orders:
+            for order_id, order in self.pending_orders.items():
+                print(f"Order {order_id}: {order.quantity}x{order.product} "
+                      f"from {order.sender} to {order.receiver}")
+        else:
+            print("No pending orders")
         
         print("="*30)
     
@@ -894,6 +903,12 @@ class Warehouse(Agent):
         
         # Calculate ID base: Warehouse type code = 2
         self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
+        
+        # Initialize critical attributes early to avoid AttributeError
+        self.pending_orders = {}
+        self.vehicles = []
+        self.suppliers = []
+        self.request_counter = 0
     
     async def setup(self):
         self.presence.approve_all = True
@@ -916,6 +931,7 @@ class Warehouse(Agent):
         
         # Dict with order_id as key and Order object as value
         self.pending_orders : dict[int, Order] = {}
+        self.presence_infos : dict[str, str] = {}
         self.request_counter : int = 0
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()

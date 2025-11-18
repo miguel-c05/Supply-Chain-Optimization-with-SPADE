@@ -32,7 +32,7 @@ import config
 from world.world import World
 from warehouse import Warehouse
 from store import Store
-from veiculos.veiculos import Veiculo
+from veiculos.veiculos import Veiculo, Order
 
 
 async def main():
@@ -107,7 +107,7 @@ async def main():
         max_orders=5,
         map=graph,
         weight=1500,
-        current_location=1,  # Start at node 1
+        current_location=20,  # Start at node 20
         event_agent_jid=None  # No event agent in this test
     )
     
@@ -207,7 +207,6 @@ async def main():
     
     # Wait for the buy behavior to complete
     await buy_behav.join()
-    await asyncio.sleep(8)  # Wait for all warehouse responses and selection
     
     print("\n📊 After warehouse selection:")
     print(f"\nStore stock: {store.stock}")
@@ -248,7 +247,7 @@ async def main():
     print(f"\n📤 {selected_warehouse.jid} automatically requesting vehicle proposals...")
     
     # Wait for vehicle proposals and selection
-    await asyncio.sleep(5)  # Wait for vehicle proposals and selection
+    await asyncio.sleep(7)  # Wait for vehicle proposals and selection
     
     print("\n📊 After vehicle assignment:")
     print(f"Vehicle1 orders: {len(vehicle1.orders)}")
@@ -273,7 +272,7 @@ async def main():
     if selected_vehicle:
         class SimulateVehiclePickup(OneShotBehaviour):
             async def run(self):
-                order = selected_vehicle.orders[0]
+                order : Order = selected_vehicle.orders[0]
                 
                 msg = Message(to=str(selected_warehouse.jid))
                 msg.set_metadata("performative", "vehicle-pickup")
