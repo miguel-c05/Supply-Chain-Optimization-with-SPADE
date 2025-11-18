@@ -280,9 +280,11 @@ class Veiculo(Agent):
         from spade.template import Template
         
         self.presence.approve_all=True
-        self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
-        # TODO: dar presence no event agent 
-        # self.presence.subscribe(self.clock_jid)
+        self.presence.set_presence(presence_type=PresenceType.AVAILABLE,
+                                   show=PresenceShow.CHAT)
+        print(f"Presence {self.presence.get_show()} ")
+        print(f"[{self.name}] Vehicle agent setup complete. Presence: AVAILABLE/CHAT")
+        print(f"[{self.name}] Will automatically subscribe to suppliers through presence.approve_all")
         
         # Template para receber propostas de ordens dos warehouses
         order_template = Template()
@@ -297,10 +299,20 @@ class Veiculo(Agent):
         event_template = Template()
         event_template.set_metadata("performative", "inform")
         
+        # Template para receber confirmações de pickup dos suppliers
+        pickup_confirm_template = Template()
+        pickup_confirm_template.set_metadata("performative", "pickup-confirm")
+        
+        # Template para receber confirmações de delivery dos warehouses/stores
+        delivery_confirm_template = Template()
+        delivery_confirm_template.set_metadata("performative", "delivery-confirm")
+        
         # Adicionar comportamentos cíclicos com templates
         self.add_behaviour(self.ReceiveOrdersBehaviour(), template=order_template)
         self.add_behaviour(self.WaitConfirmationBehaviour(), template=confirmation_template)
         self.add_behaviour(self.MovementBehaviour(), template=event_template)
+        self.add_behaviour(self.ReceivePickupConfirmation(), template=pickup_confirm_template)
+        self.add_behaviour(self.ReceiveDeliveryConfirmation(), template=delivery_confirm_template)
 
 
     class ReceiveOrdersBehaviour(CyclicBehaviour):
@@ -376,9 +388,13 @@ class Veiculo(Agent):
                 # Verificar se consegue encaixar na rota atual
                 can_fit, delivery_time = await self.can_fit_in_current_route(order)
                 
-                # Enviar proposta ao warehouse
-                proposal_msg = Message(to=msg.sender)
+                # Enviar proposta de volta ao SUPPLIER usando make_reply()
+                proposal_msg = msg.make_reply()
                 proposal_msg.set_metadata("performative", "vehicle-proposal")
+                # Preservar o request_id da mensagem original
+                request_id = msg.get_metadata("request_id")
+                if request_id:
+                    proposal_msg.set_metadata("request_id", request_id)
                 
                 proposal_data = {
                     "orderid": order.orderid,
@@ -389,7 +405,7 @@ class Veiculo(Agent):
                 proposal_msg.body = json.dumps(proposal_data)
                 await self.send(proposal_msg)
                 
-                print(f"[{self.agent.name}] Proposta enviada - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
+                print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
                     
                 # Guardar informações no dicionário de confirmações pendentes
                 self.agent.pending_confirmations[order.orderid] = {
@@ -735,6 +751,40 @@ class Veiculo(Agent):
                 self.agent.actual_route = route
                 self.agent.time_to_finish_task = time
     
+    class ReceivePickupConfirmation(CyclicBehaviour):
+        """
+        Comportamento para receber confirmações de pickup dos suppliers.
+        """
+        async def run(self):
+            msg = await self.receive(timeout=1)
+            
+            if msg:
+                try:
+                    data = json.loads(msg.body)
+                    orderid = data.get("orderid")
+                    
+                    print(f"[{self.agent.name}] ✅ Confirmação de pickup recebida do supplier {msg.sender} para ordem {orderid}")
+                    
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"[{self.agent.name}] Erro ao processar confirmação de pickup: {e}")
+    
+    class ReceiveDeliveryConfirmation(CyclicBehaviour):
+        """
+        Comportamento para receber confirmações de delivery dos warehouses/stores.
+        """
+        async def run(self):
+            msg = await self.receive(timeout=1)
+            
+            if msg:
+                try:
+                    data = json.loads(msg.body)
+                    orderid = data.get("orderid")
+                    
+                    print(f"[{self.agent.name}] ✅ Confirmação de delivery recebida de {msg.sender} para ordem {orderid}")
+                    
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"[{self.agent.name}] Erro ao processar confirmação de delivery: {e}")
+    
     class MovementBehaviour(CyclicBehaviour):
         """
         Behaviour cíclico que processa eventos de movimento e chegada do event agent.
@@ -957,6 +1007,9 @@ class Veiculo(Agent):
                 )
                 print(f"[{self.agent.name}] Status alterado para AWAY - processando ordem {order.orderid}")
                 
+                # Notificar supplier que fez pickup
+                await self.notify_supplier_pickup(order)
+                
                 # Notificar warehouse que começou a entrega
                 await self.notify_warehouse_start(order)
                 
@@ -975,6 +1028,34 @@ class Veiculo(Agent):
                 
                 # Notificar warehouse que completou a entrega
                 await self.notify_warehouse_complete(order)
+        
+        async def notify_supplier_pickup(self, order: Order):
+            """Notifica o supplier que o veículo fez pickup da ordem"""
+            # O sender da ordem é o warehouse, mas o pickup é no supplier
+            # Precisamos identificar o supplier pela localização
+            supplier_location = order.sender_location
+            
+            # Construir JID do supplier baseado na localização
+            supplier_jid = f"supplier{supplier_location}@localhost"
+            
+            msg = Message(to=supplier_jid)
+            msg.set_metadata("performative", "vehicle-pickup")
+            msg.set_metadata("supplier_id", supplier_jid)
+            msg.set_metadata("vehicle_id", str(self.agent.jid))
+            msg.set_metadata("order_id", str(order.orderid))
+            
+            order_dict = {
+                "product": order.product,
+                "quantity": order.quantity,
+                "orderid": order.orderid,
+                "sender": order.sender,
+                "receiver": order.receiver,
+                "sender_location": order.sender_location,
+                "receiver_location": order.receiver_location
+            }
+            msg.body = json.dumps(order_dict)
+            await self.send(msg)
+            print(f"[{self.agent.name}] Notificado supplier {supplier_jid}: pickup ordem {order.orderid}")
         
         async def notify_warehouse_start(self, order: Order):
             """
@@ -1008,7 +1089,7 @@ class Veiculo(Agent):
             }
             msg.body = json.dumps(data)
             await self.send(msg)
-            print(f"[{self.agent.name}] Notificado warehouse: ordem {order.orderid} iniciada")
+            print(f"[{self.agent.name}] Notificado {order.sender}: ordem {order.orderid} iniciada")
         
         async def notify_warehouse_complete(self, order: Order):
             """
