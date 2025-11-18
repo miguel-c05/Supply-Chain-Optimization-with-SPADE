@@ -2,7 +2,7 @@ import os
 
 BASE_DIR =  os.getcwd()
 
-SEED_DIR = os.path.join(BASE_DIR, "seeds")
+SEED_DIR = os.path.join(BASE_DIR,".." ,"seeds")
 
 PRODUCTS = ["A", "B", "C", "D"]
 WAREHOUSE_MAX_PRODUCT_CAPACITY = 100
