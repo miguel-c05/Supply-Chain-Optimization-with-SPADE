@@ -47,7 +47,7 @@ import os
 # Adicionar o diretório pai ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from algoritmo_tarefas import A_star_task_algorithm
+from veiculos.algoritmo_tarefas import A_star_task_algorithm
 from world.graph import Graph
 
 
@@ -214,7 +214,7 @@ class Veiculo(Agent):
     """
 
 
-    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int):
+    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int,event_agent_jid):
         """
         Inicializa um novo agente veículo.
         
@@ -247,6 +247,7 @@ class Veiculo(Agent):
         self.actual_route = [] # lista de tuplos (node_id, order_id)
         self.pending_orders = []
         self.time_to_finish_task = 0
+        self.event_agent_jid = event_agent_jid
         
         # Dicionário para armazenar múltiplas ordens aguardando confirmação
         # Key: orderid, Value: dict com order, can_fit, delivery_time, sender_jid
@@ -608,34 +609,7 @@ class Veiculo(Agent):
             # Adicionar o tempo que falta para terminar a rota atual
             current_route_time = self.agent.time_to_finish_task
             
-            return current_route_time + total_time
-        
-        async def recalculate_route(self):
-            """
-            Recalcula a rota otimizada com todas as ordens atuais usando A*.
-            
-            Executado após aceitar uma nova ordem que cabe na rota atual. Recalcula
-            o caminho ótimo para minimizar tempo total de entrega de todas as ordens.
-            
-            Side Effects:
-                - self.agent.actual_route: Atualizado com nova sequência (node_id, order_id)
-                - self.agent.time_to_finish_task: Atualizado com tempo total
-            
-            Note:
-                - Só executa se houver ordens (self.agent.orders não vazia)
-                - Usa current_location como ponto de partida
-                - Respeita restrições de capacity e max_fuel
-            """
-            if self.agent.orders:
-                route, time , _ = A_star_task_algorithm(
-                    self.agent.map,
-                    self.agent.current_location,
-                    self.agent.orders,
-                    self.agent.capacity,
-                    self.agent.max_fuel
-                )
-                self.agent.actual_route = route
-                self.agent.time_to_finish_task = time
+            return current_route_time + total_time       
     
     class WaitConfirmationBehaviour(CyclicBehaviour):
         """
@@ -721,6 +695,8 @@ class Veiculo(Agent):
                             show=PresenceShow.AWAY, 
                             status="Ocupado com tarefas"
                         )
+                        if not self.agent.next_node and self.agent.actual_route:
+                            self.agent.next_node = self.agent.actual_route[1][0]
                         print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
                         print(f"Rota recalculada: {self.agent.actual_route}")
                         print(f"Orders pendentes: {self.agent.pending_orders}")
@@ -818,6 +794,7 @@ class Veiculo(Agent):
             presence_show = self.agent.presence.get_show()
             
             if presence_show == PresenceShow.CHAT:
+                print(f"[{self.agent.name}] Veículo disponível - ignorando mensagens de movimento")
                 # Veículo disponível (sem tarefas) - não processa mensagens de movimento
                 return
             if msg:
@@ -836,7 +813,8 @@ class Veiculo(Agent):
                 if type == "arrival" and veiculo == self.agent.name:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
-                    
+                    if not order_id:
+                        self.agent.current_location, order_id = self.agent.actual_route.pop(0)
                     # Processar a primeira tarefa no nó
                     await self.process_node_arrival(self.agent.current_location, order_id)
                     
@@ -869,17 +847,13 @@ class Veiculo(Agent):
                         # Mover pending orders para orders
                         self.agent.orders = self.agent.pending_orders.copy()
                         self.agent.pending_orders = []
-                    
-                    # Calcular próximo nó e tempo restante
-                    if self.agent.actual_route:
-                        self.agent.next_node = self.agent.actual_route[0][0]
-                        _, _ , self.agent.time_to_finish_task = self.agent.map.djikstra(
-                            self.agent.current_location,
-                            self.agent.next_node
-                        )
-                        
-                        # Notificar event agent do tempo restante para próximo nó
-                        await self.notify_event_agent(self.agent.time_to_finish_task, self.agent.next_node)
+                        self.agent.next_node = self.agent.actual_route[1][0]
+                    else:
+                        # Definir próximo nó
+                        if self.agent.actual_route[0][0] == None:
+                            self.agent.next_node = self.agent.actual_route[1][0]
+                        else:
+                            self.agent.next_node = self.agent.actual_route[0][0]
                 else: 
                     # Movimento durante o trânsito
                     print(f"[{self.agent.name}] Movimento durante o trânsito")
@@ -902,6 +876,7 @@ class Veiculo(Agent):
                         self.agent.current_location,
                         self.agent.next_node
                     )
+                    print(f"[{self.agent.name}] Notificando event agent de {self.agent.current_location}- tempo até próximo nó ({self.agent.next_node}): {time_left}")
                     await self.notify_event_agent(time_left, self.agent.next_node)
         
         async def process_node_arrival(self, node_id: int, order_id: int):
@@ -1095,18 +1070,17 @@ class Veiculo(Agent):
                 - Só envia se event_agent_jid estiver configurado
                 - Retorna silenciosamente se atributo não existir
             """
-            if not hasattr(self.agent, 'event_agent_jid'):
-                return
             
             msg = Message(to=self.agent.event_agent_jid)
             msg.set_metadata("performative", "inform")
             msg.set_metadata("type", "time-update")
             
             data = {
+                "type": "arrival",
                 "vehicle_id": str(self.agent.jid),
                 "current_location": self.agent.current_location,
                 "next_node": next_node,
-                "time_left": time_left,
+                "time": time_left,
             }
             msg.body = json.dumps(data)
             await self.send(msg)
