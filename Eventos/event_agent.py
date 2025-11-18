@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any
 from spade.agent import Agent
-from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
+from spade.behaviour import CyclicBehaviour, PeriodicBehaviour, OneShotBehaviour
 from spade.message import Message
 from spade.presence import PresenceType, PresenceShow
 
@@ -49,12 +49,12 @@ class Event:
     
     def to_dict(self) -> Dict[str, Any]:
         """Converte o evento para dicionário para envio"""
-        return {
-            "type": self.event_type,
-            "time": self.time,
-            "data": self.data,
-            "timestamp": self.timestamp
-        }
+        if self.event_type == "arrival":
+            return {
+                "type": self.event_type,
+                "time": self.time,
+                "vehicle": self.sender.split('@')[0],
+            }
 
 
 class EventDrivenAgent(Agent):
@@ -63,31 +63,40 @@ class EventDrivenAgent(Agent):
     Recebe eventos continuamente e processa a cada 5 segundos.
     """
     
-    def __init__(self, jid: str, password: str, simulation_interval: float = 5.0):
+    def __init__(self, jid: str, password: str, simulation_interval: float = 5.0, registered_vehicles: List[str] = [],
+                 registered_warehouses: List[str] = [], registered_stores: List[str] = [],
+                 world_agent: str = None):
         super().__init__(jid, password)
         self.event_heap = []  # Min heap de eventos (não-trânsito)
         self.transit_events = []  # Lista separada para eventos de trânsito
         self.simulation_interval = simulation_interval  # Intervalo de simulação (5s)
-        self.registered_vehicles = []  # Veículos registrados
-        self.registered_warehouses = []  # Warehouses registrados
-        self.registered_stores = []  # Stores registrados
-        self.world_agent = None  # Agente do mundo
+        self.registered_vehicles = registered_vehicles  # Veículos registrados
+        self.registered_warehouses = registered_warehouses  # Warehouses registrados
+        self.registered_stores = registered_stores  # Stores registrados
+        self.world_agent = world_agent  # Agente do mundo
         self.event_count = 0  # Contador de eventos recebidos
         self.processed_count = 0  # Contador de eventos processados
         self.last_simulation_time = 0.0  # Tempo da última simulação
         self.time_simulated = 0.0  # Tempo total simulado
         
     async def setup(self):
+        
         print(f"\n{'='*70}")
         print(f"[{self.name}] Event-Driven Agent iniciado")
         print(f"[{self.name}] Intervalo de simulação: {self.simulation_interval}s")
         print(f"{'='*70}\n")
-        self.presence.approve_all=True
-        all_agents = [self.registered_vehicles, self.registered_warehouses, self.registered_stores] 
-        for agent_list in all_agents:
-            self.presence.subscribe(self.clock_jid)
+        self.presence.approve_all = True
+        
+        # Subscribe a cada agente individualmente
+        all_agents = self.registered_vehicles + self.registered_warehouses + self.registered_stores
+        for agent_jid in all_agents:
+            self.presence.subscribe(agent_jid)
+        
         self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
     
+        # Behaviour para enviar mensagem sinaleira inicial
+        initial_signal = self.SendInitialSignalBehaviour()
+        self.add_behaviour(initial_signal)
         
         # Behaviour para receber eventos continuamente
         receive_behaviour = self.ReceiveEventsBehaviour()
@@ -98,6 +107,51 @@ class EventDrivenAgent(Agent):
         self.add_behaviour(process_behaviour)
         
         # Behaviour para registrar veículos
+    
+    class SendInitialSignalBehaviour(OneShotBehaviour):
+        """
+        Behaviour que envia uma mensagem sinaleira inicial aos veículos.
+        Executa apenas uma vez no início do agente.
+        """
+        
+        async def run(self):
+            # Aguardar um pouco para garantir que os veículos estejam registrados
+            
+            if not self.agent.registered_vehicles:
+                print(f"[{self.agent.name}] ⚠️ Nenhum veículo registrado para enviar sinal inicial")
+                return
+            
+            # Usar nome fictício que não corresponde a nenhum veículo real
+            vehicle_name_ficticio = "vehicle_init_signal_999"
+            
+            # Enviar mensagem para TODOS os veículos registrados
+            print(f"\n{'='*70}")
+            print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL")
+            print(f"  Destinatários: {len(self.agent.registered_vehicles)} veículos")
+            print(f"  Veículo (fictício): {vehicle_name_ficticio}")
+            print(f"  Tipo: arrival")
+            print(f"  Tempo: 0.0")
+            print(f"  Nota: Mensagem será ignorada pelos veículos (nome não corresponde e tempo zero mas vao notificar o agente)")
+            print(f"{'='*70}")
+            
+            for vehicle_jid in self.agent.registered_vehicles:
+                # Criar mensagem de arrival inicial com tempo zero
+                msg = Message(to=vehicle_jid)
+                msg.set_metadata("performative", "inform")
+                
+                data = {
+                    "type": "arrival",
+                    "vehicle": vehicle_name_ficticio,  # Nome fictício
+                    "time": 0.0
+                }
+                msg.body = json.dumps(data)
+                
+                await self.send(msg)
+                
+                vehicle_name = str(vehicle_jid).split("@")[0]
+                print(f"  → Enviado para: {vehicle_name}")
+            
+            print(f"{'='*70}\n")
     
     class ReceiveEventsBehaviour(CyclicBehaviour):
         """
@@ -253,97 +307,218 @@ class EventDrivenAgent(Agent):
 
 async def main():
     """
-    Função principal para testar o Event-Driven Agent.
+    Função principal para executar o teste do Event Agent.
+    Cria um mundo, veículos, warehouse de teste e o event agent.
     """
+    import sys
+    import os
+    
+    # Adicionar diretório pai ao path
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    from veiculos.veiculos import Veiculo
+    from veiculos.test_vehicle_agent import TestWarehouseAgent
+    from world.world import World
+    
+    # Configurações dos agentes
     EVENT_AGENT_JID = "event_agent@localhost"
     EVENT_AGENT_PASSWORD = "event123"
+    WAREHOUSE_JID = "warehouse_test@localhost"
+    WAREHOUSE_PASSWORD = "warehouse123"
+    VEHICLE_JID = "vehicle1@localhost"
+    VEHICLE_PASSWORD = "vehicle123"
+    VEHICLE_JID_2 = "vehicle2@localhost"
+    VEHICLE_PASSWORD_2 = "vehicle234"
     
     print("="*70)
-    print("EVENT-DRIVEN AGENT - TESTE")
+    print("TESTE DO EVENT-DRIVEN AGENT")
     print("="*70)
     
-    # Criar e iniciar o agente de eventos
+    # Criar o mundo
+    print("\n🌍 Criando o mundo...")
+    world = World(
+        width=8,
+        height=4,
+        mode="different", 
+        max_cost=4, 
+        gas_stations=2, 
+        warehouses=5,
+        suppliers=2, 
+        stores=6, 
+        highway=True,
+        traffic_probability=0.3,
+        traffic_spread_probability=0.7,
+        traffic_interval=3,
+        untraffic_probability=0.4
+    )
+    
+    import matplotlib.pyplot as plt
+    #world.plot_graph()
+    
+    print(f"✓ Mundo criado: {world.width}x{world.height}")
+    print(f"✓ Nós no grafo: {len(world.graph.nodes)}")
+    print(f"✓ Arestas no grafo: {len(world.graph.edges)}")
+    
+    # Identificar uma localização inicial para o veículo (primeiro store)
+    store_locations = []
+    for node_id, node in world.graph.nodes.items():
+        if hasattr(node, 'store') and node.store:
+            store_locations.append(node_id)
+    
+    if not store_locations:
+        print("❌ ERRO: Não foram encontrados stores para localização inicial do veículo!")
+        return
+    
+    initial_location = store_locations[0]
+    initial_location1 = store_locations[1]
+    
+    print(f"\n🚚 Criando veículo...")
+    print(f"   Localização inicial: {initial_location}")
+    print(f"   Capacidade: 1000 kg")
+    print(f"   Combustível máximo: 100 L")
+    
+    # Criar o veículo
+    vehicle = Veiculo(
+        jid=VEHICLE_JID,
+        password=VEHICLE_PASSWORD,
+        max_fuel=100,
+        capacity=1000,
+        max_orders=10,
+        map=world.graph,
+        weight=1500,
+        current_location=initial_location,
+        event_agent_jid=EVENT_AGENT_JID
+    )
+    vehicle_2 = Veiculo(
+        jid=VEHICLE_JID_2,
+        password=VEHICLE_PASSWORD_2,
+        max_fuel=100,
+        capacity=1000,
+        max_orders=10,
+        map=world.graph,
+        weight=1500,
+        current_location=initial_location1,
+        event_agent_jid=EVENT_AGENT_JID
+    )
+    
+    # Criar event agent com lista de veículos registrados
+    print(f"\n⚙️ Criando Event Agent...")
     event_agent = EventDrivenAgent(
         jid=EVENT_AGENT_JID,
         password=EVENT_AGENT_PASSWORD,
-        simulation_interval=5.0  # Processar a cada 5 segundos
+        simulation_interval=5.0,
+        registered_vehicles=[VEHICLE_JID, VEHICLE_JID_2],
+        registered_warehouses=[WAREHOUSE_JID],
+        registered_stores=[]
     )
     
+    # Criar warehouse de teste
+    print(f"\n📦 Criando Warehouse de teste...")
+    try:
+        warehouse = TestWarehouseAgent(
+            jid=WAREHOUSE_JID,
+            password=WAREHOUSE_PASSWORD,
+            vehicle_jids=[VEHICLE_JID, VEHICLE_JID_2],
+            world=world
+        )
+    except ValueError as e:
+        print(f"\n❌ ERRO: {e}")
+        print("Certifique-se de que o mundo tem warehouses e stores suficientes!")
+        return
+    
+    print("\n" + "="*70)
+    print(f"Event Agent JID: {EVENT_AGENT_JID}")
+    print(f"Warehouse JID: {WAREHOUSE_JID}")
+    print(f"Vehicle JID: {VEHICLE_JID}")
+    print("="*70)
+    
+    # Iniciar todos os agentes
+    print("\n🚀 Iniciando agentes...")
+    await vehicle.start()
+    print(f"✓ Veículo iniciado: {VEHICLE_JID}")
+    await vehicle_2.start()
+    print(f"✓ Veículo iniciado: {VEHICLE_JID_2}")
+    await warehouse.start()
+    print(f"✓ Warehouse de teste iniciado: {WAREHOUSE_JID}")
     await event_agent.start()
-    print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}\n")
+    print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
     
-    # Simular envio de alguns eventos para teste
-    print("📤 Enviando eventos de teste...\n")
-    
-    # Evento de arrival
-    arrival_msg = Message(to=EVENT_AGENT_JID)
-    arrival_msg.body = json.dumps({
-        "type": "arrival",
-        "time": 3.5,
-        "data": {"vehicle": "vehicle1", "location": 5}
-    })
-    await event_agent.send(arrival_msg)
-    
-    # Evento de trânsito
-    transit_msg = Message(to=EVENT_AGENT_JID)
-    transit_msg.body = json.dumps({
-        "type": "Transit",
-        "time": 8.0,
-        "data": {
-            "edges": [
-                {"node1": 3, "node2": 7, "weight": 12.5}
-            ]
-        }
-    })
-    await event_agent.send(transit_msg)
-    
+    print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
+    print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
+    print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
+    print(f"[SISTEMA] 🗺️  Usando {len(warehouse.warehouse_locations)} warehouses e {len(warehouse.store_locations)} stores")
+    print(f"[SISTEMA] 🚚 Veículo em localização {initial_location}")
     print(f"[SISTEMA] ⌨️  Pressione Ctrl+C para parar\n")
     
     try:
-        # Manter o agente rodando
+        # Manter os agentes rodando
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        print("\n[SISTEMA] Parando agente...")
+        print("\n[SISTEMA] Parando agentes...")
     finally:
         await event_agent.stop()
-        print("[SISTEMA] ✓ Agente parado!")
+        await warehouse.stop()
+        await vehicle.stop()
+        print("[SISTEMA] ✓ Agentes parados!")
+
 
 
 if __name__ == "__main__":
     """
-    EVENT-DRIVEN AGENT
-    ==================
+    TESTE DO EVENT-DRIVEN AGENT
+    ============================
     
-    Este agente gerencia eventos usando uma min heap e processa periodicamente.
+    Este script testa o Event-Driven Agent integrado com veículos e warehouse.
     
-    CARACTERÍSTICAS:
+    CARACTERÍSTICAS DO TESTE:
+    -------------------------
+    - Cria um mundo 8x4 com 5 warehouses, 6 stores, 2 gas stations
+    - Inicia 1 veículo que se comunica com o event agent
+    - Warehouse envia ordens aleatórias a cada 5 segundos
+    - Event agent processa eventos a cada 5 segundos
+    - Simula arrival e transit events para testar o sistema completo
+    
+    AGENTES CRIADOS:
     ----------------
-    - Recebe eventos continuamente (CyclicBehaviour)
-    - Processa eventos a cada 5 segundos (PeriodicBehaviour)
-    - Usa min heap para ordenar eventos por tempo
-    - Eventos de trânsito têm tempo decrementado e são recolocados na heap
-    - Outros eventos são notificados imediatamente
-    - Suporta registro de veículos para notificações
+    1. EventDrivenAgent: Gerencia heap de eventos e notifica veículos
+    2. Veiculo: Recebe ordens, calcula rotas, envia eventos de arrival
+    3. TestWarehouseAgent: Simula warehouse enviando ordens e arrival/transit
     
-    TIPOS DE EVENTOS:
-    -----------------
-    - "arrival": Chegada de veículo a um destino
-    - "Transit"/"transit": Mudança de trânsito em arestas
-    - Outros eventos personalizados
+    FLUXO DE TESTE:
+    ---------------
+    1. Event agent envia sinal inicial (fictício) aos veículos
+    2. Warehouse envia ordens ao veículo
+    3. Veículo responde com propostas (can_fit + delivery_time)
+    4. Warehouse confirma ordens (80% aceitas)
+    5. Veículo envia eventos de arrival ao event agent
+    6. Event agent processa eventos na heap e notifica veículos
+    7. Warehouse simula arrival/transit a cada 10s para testar MovementBehaviour
     
-    FORMATO DE MENSAGEM:
-    --------------------
-    {
-        "type": "arrival" ou "Transit",
-        "time": 5.0,
-        "data": {...},
-        "timestamp": "2025-11-17T14:30:00"
-    }
+    COMO EXECUTAR:
+    --------------
+    1. Certifique-se de que o servidor XMPP está rodando (Openfire/Prosody)
+    2. Execute: python Eventos/event_agent.py
+    3. Observe os logs dos 3 agentes interagindo
+    4. Pressione Ctrl+C para parar
     
     REGISTRO DE VEÍCULOS:
     ---------------------
-    Enviar mensagem com metadata "performative": "subscribe"
+    Os veículos são registrados no event agent via lista registered_vehicles.
+    Para adicionar mais veículos, inclua seus JIDs na lista ao criar o EventDrivenAgent.
+    
+    EVENTOS TESTADOS:
+    -----------------
+    - arrival: Veículo chega a um nó (pickup ou delivery)
+    - Transit: Mudança de peso em arestas (trânsito)
+    - Sinal inicial: Mensagem fictícia para testar broadcast
+    
+    OBSERVAÇÕES:
+    ------------
+    - Event agent usa min heap para ordenar eventos por tempo
+    - Eventos de trânsito têm tempo decrementado a cada ciclo
+    - Primeiro evento da heap é processado, restante descartado
+    - Veículos filtram mensagens por nome (ignoram se não corresponde)
     """
     
     asyncio.run(main())

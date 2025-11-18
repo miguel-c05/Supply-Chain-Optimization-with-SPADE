@@ -22,13 +22,14 @@ from world.world import World
 
 class TestWarehouseAgent(Agent):
     """
-    Agente simulador de warehouse que envia ordens aleatórias para testar o veículo.
+    Agente simulador de warehouse que envia ordens aleatórias para testar veículos.
     Usa World para obter localizações reais de warehouses e stores.
+    Envia ordens para veículos escolhidos aleatoriamente da lista fornecida.
     """
     
-    def __init__(self, jid: str, password: str, vehicle_jid: str, world: World):
+    def __init__(self, jid: str, password: str, vehicle_jids: list[str], world: World):
         super().__init__(jid, password)
-        self.vehicle_jid = vehicle_jid
+        self.vehicle_jids = vehicle_jids  # Lista de JIDs de veículos
         self.world = world
         self.graph = world.graph
         self.order_counter = 1
@@ -60,11 +61,13 @@ class TestWarehouseAgent(Agent):
     
     async def setup(self):
         print(f"\n[{self.name}] Warehouse de teste iniciado")
-        print(f"[{self.name}] Alvo: {self.vehicle_jid}")
+        print(f"[{self.name}] Veículos alvo: {len(self.vehicle_jids)}")
+        for vehicle_jid in self.vehicle_jids:
+            print(f"[{self.name}]   - {vehicle_jid}")
         print(f"[{self.name}] Mapa: {self.world.width}x{self.world.height}")
         
         # Comportamento para enviar ordens periodicamente
-        send_behaviour = self.SendRandomOrdersBehaviour(period=5.0)  # A cada 5 segundos
+        send_behaviour = self.SendRandomOrdersBehaviour(period=5)  # A cada 5 segundos
         self.add_behaviour(send_behaviour)
         
         # Comportamento para receber propostas dos veículos
@@ -74,20 +77,19 @@ class TestWarehouseAgent(Agent):
         # Comportamento para receber notificações de status
         status_behaviour = self.ReceiveStatusBehaviour()
         self.add_behaviour(status_behaviour)
-        
-        # Comportamento para simular chegadas de veículos (teste do MovementBehaviour)
-        arrival_behaviour = self.SimulateArrivalBehaviour(period=10.0)  # A cada 10 segundos
-        self.add_behaviour(arrival_behaviour)
     
     class SendRandomOrdersBehaviour(PeriodicBehaviour):
-        """Envia ordens aleatórias para o veículo periodicamente"""
+        """Envia ordens aleatórias para veículos escolhidos aleatoriamente"""
         
         async def run(self):
+            # Escolher um veículo aleatório da lista
+            target_vehicle = random.choice(self.agent.vehicle_jids)
+            
             # Gerar ordem aleatória usando localizações reais do mundo
             order = self.generate_random_order()
             
-            # Enviar ordem ao veículo
-            msg = Message(to=self.agent.vehicle_jid)
+            # Enviar ordem ao veículo escolhido
+            msg = Message(to=target_vehicle)
             msg.set_metadata("performative", "order-proposal")
             msg.body = json.dumps(order)
             
@@ -96,11 +98,13 @@ class TestWarehouseAgent(Agent):
             # Guardar ordem pendente
             self.agent.pending_proposals[order["orderid"]] = {
                 "order": order,
-                "timestamp": datetime.now()
+                "target_vehicle": target_vehicle  # Guardar qual veículo foi escolhido
             }
             
+            vehicle_name = target_vehicle.split("@")[0]
             print(f"\n{'='*60}")
             print(f"[{self.agent.name}] ORDEM ENVIADA #{order['orderid']}")
+            print(f"  Veículo alvo: {vehicle_name}")
             print(f"  Produto: {order['product']}")
             print(f"  Quantidade: {order['quantity']}")
             print(f"  De: Warehouse #{order['sender_location']} → Store #{order['receiver_location']}")
@@ -154,7 +158,7 @@ class TestWarehouseAgent(Agent):
                         print(f"{'*'*60}\n")
                         
                         # Decidir se aceita (80% de chance de aceitar para teste)
-                        accept = random.random() < 0.3
+                        accept = random.random() < 1
                         
                         # Enviar confirmação
                         await self.send_confirmation(msg.sender, orderid, accept)
@@ -204,120 +208,6 @@ class TestWarehouseAgent(Agent):
                 
                 except Exception as e:
                     print(f"[{self.agent.name}] Erro ao processar status: {e}")
-    
-    class SimulateArrivalBehaviour(PeriodicBehaviour):
-        """
-        Simula mensagens de chegada (arrival) e trânsito (transit) para testar o MovementBehaviour do veículo.
-        """
-        
-        def __init__(self, period, start_at=None):
-            super().__init__(period, start_at)
-            self.first_run = True  # Flag para controlar a primeira iteração
-        
-        async def run(self):
-            # Na primeira iteração, esperar 20 segundos
-            if self.first_run:
-                print(f"\n[{self.agent.name}] ⏳ Primeira iteração: aguardando 10 segundos...\n")
-                await asyncio.sleep(10)
-                self.first_run = False
-                print(f"\n[{self.agent.name}] ✓ Iniciando envio de mensagens de arrival e transit\n")
-            
-            # Decidir se envia arrival ou transit (50% cada)
-            simulate_transit = random.random() < 0.5
-            
-            if simulate_transit:
-                # Simular trânsito
-                await self.simulate_transit()
-            else:
-                # Simular arrival
-                await self.simulate_arrival()
-        
-        async def simulate_arrival(self):
-            """Simula mensagem de arrival (chegada ao destino)"""
-            # 50% de chance de enviar mensagem com o nome correto do veículo
-            # 50% de chance de enviar com nome aleatório (para testar filtro)
-            if random.random() < 0.5:
-                # Usar o nome correto do veículo (extrair de vehicle_jid)
-                vehicle_name = self.agent.vehicle_jid.split("@")[0]
-            else:
-                # Usar nome aleatório
-                vehicle_name = f"vehicle_random_{random.randint(1, 100)}"
-            
-            # Criar mensagem de arrival
-            msg = Message(to=self.agent.vehicle_jid)
-            msg.set_metadata("performative", "inform")
-            
-            data = {
-                "type": "arrival",
-                "vehicle": vehicle_name,
-                "time": round(random.uniform(1.0, 10.0), 2)  # Tempo aleatório para teste
-            }
-            msg.body = json.dumps(data)
-            
-            await self.send(msg)
-            
-            print(f"\n[{self.agent.name}] 📍 ARRIVAL simulado enviado")
-            print(f"  Veículo: {vehicle_name}")
-            print(f"  Correto: {'✓ SIM' if vehicle_name == self.agent.vehicle_jid.split('@')[0] else '✗ NÃO (será ignorado)'}")
-            print(f"  Tempo: {data['time']:.2f}\n")
-        
-        async def simulate_transit(self):
-            """Simula mensagem de trânsito (mudança de peso de uma aresta)"""
-            # Selecionar uma aresta aleatória do grafo
-            # graph.edges já é uma lista, não um dicionário
-            edges = self.agent.graph.edges
-            
-            if not edges:
-                print(f"[{self.agent.name}] ⚠️  Não há arestas no grafo para simular trânsito")
-                return
-            
-            # Escolher aresta aleatória
-            edge = random.choice(edges)
-            
-            # Criar novo peso (aumentar ou diminuir o peso atual)
-            # 70% chance de aumentar (trânsito), 30% de diminuir (aliviar trânsito)
-            if random.random() < 0.7:
-                # Aumentar peso (simular trânsito)
-                new_weight = edge.weight * random.uniform(1.5, 3.0)
-                traffic_status = "🚗 TRÂNSITO"
-            else:
-                # Diminuir peso (aliviar trânsito)
-                new_weight = max(edge.weight * random.uniform(0.5, 0.9), 1.0)
-                traffic_status = "✅ ALÍVIO"
-            
-            new_weight = round(new_weight, 2)
-            
-            # Gerar tempo aleatório para simular quando o trânsito foi detectado
-            time_value = round(random.uniform(1.0, 10.0), 2)
-            
-            # Criar mensagem de transit conforme formato esperado (linhas 484 e 602-619)
-            msg = Message(to=self.agent.vehicle_jid)
-            msg.set_metadata("performative", "inform")
-            
-            data = {
-                "type": "Transit",
-                "time": time_value,
-                "data": {
-                    "edges": [
-                        {
-                            "node1": edge.node1.id,
-                            "node2": edge.node2.id,
-                            "weight": new_weight
-                        }
-                    ]
-                },
-                "timestamp": datetime.now().isoformat()
-            }
-            msg.body = json.dumps(data)
-            
-            await self.send(msg)
-            
-            print(f"\n[{self.agent.name}] 🚦 TRANSIT simulado enviado - {traffic_status}")
-            print(f"  Edge: {edge.node1.id} → {edge.node2.id}")
-            print(f"  Peso antigo: {edge.weight:.2f}")
-            print(f"  Peso novo: {new_weight:.2f}")
-            print(f"  Variação: {((new_weight/edge.weight - 1) * 100):+.1f}%")
-            print(f"  Tempo: {time_value:.2f}\n")
 
 
 async def main():
@@ -400,7 +290,7 @@ async def main():
         warehouse = TestWarehouseAgent(
             jid=WAREHOUSE_JID,
             password=WAREHOUSE_PASSWORD,
-            vehicle_jid=VEHICLE_JID,
+            vehicle_jids=[VEHICLE_JID],  # Lista de veículos
             world=world
         )
     except ValueError as e:
