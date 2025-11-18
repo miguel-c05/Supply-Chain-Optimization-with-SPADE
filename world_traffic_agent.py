@@ -114,8 +114,8 @@ class WorldTrafficAgent(Agent):
             # Simular segundo a segundo
             remaining_time = self.simulation_time
             
-            # TODO 
-            #podes implementar como quiseres mas assim é assim que sugiro
+            all_updates = self.collect_traffic_updates(remaining_time)
+            '''#podes implementar como quiseres mas assim é assim que sugiro
             while remaining_time > 0:
                 print(f"[{self.agent.name}] ⏱️  Simulando segundo {self.simulation_time - remaining_time + 1}/{self.simulation_time}")
                 
@@ -131,7 +131,7 @@ class WorldTrafficAgent(Agent):
                 remaining_time -= 1
                 
                 # Pequena pausa para não sobrecarregar (opcional)
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.01)'''
             
             print(f"\n[{self.agent.name}] ✓ Simulação #{sim_id} concluída")
             print(f"   Total de atualizações: {len(all_updates)}")
@@ -155,9 +155,13 @@ class WorldTrafficAgent(Agent):
                 Lista de dicionários com as atualizações
             """
             updates = []
-            #TODO
-            # cada update deve ter "time", "node1", "node2", "weight"
-            # Nao te esqueças que o evento de retornar ao normal deve retornar ao peso original
+            updates = self.world.get_events(time_remaining)
+            # updates = 
+            # [
+            #   {"node1_id": 27, "node2_id": 20, "new_time": 3.82, "new_fuel_consumption": 0.155, "instant": 0},
+            #   {"node1_id": 14, "node2_id": 13, "new_time": 4.0, "new_fuel_consumption": 0.144, "instant": 3},
+            #   ...
+            # ]
             
             return updates
         
