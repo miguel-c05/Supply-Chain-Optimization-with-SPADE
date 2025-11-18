@@ -97,11 +97,11 @@ async def main():
     
     # Start all agents
     print("\n🚀 Starting agents...")
+    await vehicle1.start(auto_register=True)
+    await vehicle2.start(auto_register=True)
     await warehouse.start(auto_register=True)
     await supplier1.start(auto_register=True)
     await supplier2.start(auto_register=True)
-    await vehicle1.start(auto_register=True)
-    await vehicle2.start(auto_register=True)
     
     print("✅ All agents started!")
     
@@ -227,13 +227,11 @@ async def main():
     order_id = list(selected_supplier.pending_deliveries.keys())[0]
     print(f"\n📦 Order ID: {order_id}")
     
-    # Trigger supplier to assign vehicle
-    assign_behav = selected_supplier.AssignVehicle(request_id=order_id)
-    selected_supplier.add_behaviour(assign_behav)
-    print(f"\n📤 {selected_supplier.jid} requesting vehicle proposals")
+    # NOTE: AssignVehicle is automatically triggered by ReceiveConfirmationOrDenial
+    # No need to manually trigger it here
+    print(f"\n📤 {selected_supplier.jid} automatically requesting vehicle proposals...")
     
-    # Wait for the assign behavior to complete
-    await assign_behav.join()
+    # Wait for vehicle proposals and selection
     await asyncio.sleep(5)  # Wait for vehicle proposals and selection
     
     print("\n📊 After vehicle assignment:")
