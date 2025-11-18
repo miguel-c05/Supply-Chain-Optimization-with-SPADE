@@ -20,40 +20,21 @@ class WorldAgent(Agent):
     - Respond to queries from other agents about world state
     - Broadcast world state updates to subscribed agents
     """
-
-    class WorldInitBehaviour(OneShotBehaviour):
-        """Initializes the world when the agent starts up."""
+    
+    def __init__(self, jid, password, world=None):
+        """
+        Initialize the WorldAgent.
         
-        async def run(self):
-            """Initialize the world with configured parameters."""
-            print(f"[{self.agent.name}] Initializing World...")
-            
-            # Create world instance with specified parameters
-            self.agent.world = World(
-                width=7,
-                height=7,
-                mode="different", 
-                max_cost=4, 
-                seed=None, 
-                gas_stations=1, 
-                warehouses=2,
-                suppliers=3, 
-                stores=2, 
-                highway=True,
-                traffic_probability=0.4,
-                traffic_spread_probability=0.75,
-                traffic_interval=3,
-                untraffic_probability=0.4
-            )
-
-            
-            print(f"[{self.agent.name}] World initialized successfully!")
-            print(f"[{self.agent.name}] World Grid: {self.agent.world.width}x{self.agent.world.height}")
-            print(f"[{self.agent.name}] World Seed: {self.agent.world.seed}")
-            print(f"[{self.agent.name}] Starting main simulation loop...")
+        Args:
+            jid: Agent JID
+            password: Agent password
+            world: World instance (if None, will need to be set before use)
+        """
+        super().__init__(jid, password)
+        self.world = world
 
     class TimeDeltaBehaviour(CyclicBehaviour):
-        """Handles time-delta simulation requests."""
+        """Handles time-delta simulation requests and traffic simulation requests."""
         
         async def run(self):
             """Process time-delta messages and simulate world."""
@@ -61,6 +42,35 @@ class WorldAgent(Agent):
             
             if msg:
                 try:
+                    # Check if it's a traffic simulation request from event agent
+                    if msg.get_metadata("performative") == "request" and msg.get_metadata("action") == "simulate_traffic":
+                        content = json.loads(msg.body)
+                        simulation_time = content.get("simulation_time", 10)
+                        sender = str(msg.sender)
+                        
+                        print(f"\n[{self.agent.name}] 🌍 Recebido pedido de simulação de trânsito")
+                        print(f"  Remetente: {sender}")
+                        print(f"  Tempo de simulação: {simulation_time}s")
+                        
+                        # Simulate traffic events using get_events
+                        events = self.agent.world.get_events(int(simulation_time))
+                        
+                        print(f"[{self.agent.name}] ✅ Simulação completa: {len(events)} eventos gerados")
+                        
+                        # Send response with traffic events
+                        response = Message(to=sender)
+                        response.set_metadata("performative", "inform")
+                        response.set_metadata("action", "traffic_events")
+                        response.body = json.dumps({
+                            "events": events,
+                            "simulation_time": simulation_time
+                        })
+                        await self.send(response)
+                        
+                        print(f"[{self.agent.name}] 📤 Eventos de trânsito enviados para {sender}\n")
+                        return
+                    
+                    # Handle normal time-delta requests
                     content = json.loads(msg.body)
                     delta_time = content.get("delta_time", 1)
                     sender = str(msg.sender)
@@ -329,13 +339,18 @@ class WorldAgent(Agent):
         """Set up the WorldAgent with its behaviors."""
         print(f"[{self.name}] Setting up WorldAgent...")
         
-        # Initialize agent attributes
-        self.world = None
-        self.subscribers = []
-        self.tick_interval = 2  # Seconds between world ticks
+        # Initialize agent attributes if not set
+        if not hasattr(self, 'subscribers'):
+            self.subscribers = []
+        if not hasattr(self, 'tick_interval'):
+            self.tick_interval = 2  # Seconds between world ticks
         
-        # Add behaviors
-        self.add_behaviour(self.WorldInitBehaviour())
+        if self.world is not None:
+            print(f"[{self.name}] Using provided World instance")
+            print(f"[{self.name}] World Grid: {self.world.width}x{self.world.height}")
+            print(f"[{self.name}] World Seed: {self.world.seed}")
+        else:
+            print(f"[{self.name}] ⚠️ Warning: No World instance provided!")
         
         # Add time-delta behaviour with template
         template = Template()

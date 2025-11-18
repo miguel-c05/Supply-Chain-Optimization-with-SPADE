@@ -137,7 +137,7 @@ class World:
         """Adiciona os custos da matriz como peso nas arestas"""
         for edge in self.graph.edges:
             u, v = edge.node1.id, edge.node2.id
-            print(f"Adding cost to edge ({u}, {v}): Distance = {self.distances_matrix[u][v]}, Initial Weight = {self.traffic_matrix[u][v]}")
+            #print(f"Adding cost to edge ({u}, {v}): Distance = {self.distances_matrix[u][v]}, Initial Weight = {self.traffic_matrix[u][v]}")
             edge.weight = self.traffic_matrix[u][v]
             edge.initial_weight = self.traffic_matrix[u][v]
             edge.distance = self.distances_matrix[u][v]
@@ -271,10 +271,10 @@ class World:
 
     def traffic(self):
         """Aumenta o custo de uma edge aleatória para simular tráfego"""
-        edges = random.sample(self.graph.edges, min(3, len(self.graph.edges)))
+        edges = random.sample(self.graph.edges, 1)
         for edge in edges:
             u, v = edge.node1.id, edge.node2.id
-            increase = round(random.uniform(1, 5), 4)
+            increase = round(random.uniform(1, 2), 4)
             self.traffic_matrix[u][v] += increase
             edge.weight = min(self.traffic_matrix[u][v], self.max_cost)
             
@@ -287,7 +287,7 @@ class World:
                 self.graph.infected_edges.append(edge_key)
             
             self.dinamic_traffic(edge, visited=set())
-            print(f"Traffic added: Cost from Node {u} to Node {v} increased by {increase} to {edge.weight}")
+            #print(f"Traffic added: Cost from Node {u} to Node {v} increased by {increase} to {edge.weight}")
 
     def dinamic_traffic(self, edge, visited=None):
         """Propaga tráfego dinamicamente para arestas adjacentes na mesma direção"""
@@ -326,7 +326,7 @@ class World:
                     if graph_edge_key not in self.graph.infected_edges:
                         self.graph.infected_edges.append(graph_edge_key)
                     
-                    print(f"Dynamic traffic: Cost from Node {u} to Node {v} increased by {increase} to {graph_edge.weight}")
+                    #print(f"Dynamic traffic: Cost from Node {u} to Node {v} increased by {increase} to {graph_edge.weight}")
                     self.dinamic_traffic(graph_edge, visited)
         
     def _restore_infected_edges(self):
@@ -346,7 +346,7 @@ class World:
                     edge.calculate_fuel_consumption()
                     
                     edges_to_remove.append(edge_key)
-                    print(f"Edge ({u}, {v}) restored to initial weight: {edge.initial_weight}")
+                    #print(f"Edge ({u}, {v}) restored to initial weight: {edge.initial_weight}")
         
         # Remove arestas restauradas da lista de infected_edges
         for edge_key in edges_to_remove:
@@ -370,8 +370,8 @@ class World:
         
         # Simulate each tick
         for i in range(delta_time):
-            if (i + 1) % 2 == 0:
-                self._restore_infected_edges()
+            
+            self._restore_infected_edges()
 
             if self.tick_counter % self.traffic_interval == 0:
                 p = random.uniform(0, 1)
@@ -396,5 +396,8 @@ class World:
                     events.append(event)
                     # Update the initial state to current state
                     initial_states[edge_key] = edge.weight
+
+            self.plot_graph()
         
+        events = [event for event in events if event["instant"] != 0]
         return events
