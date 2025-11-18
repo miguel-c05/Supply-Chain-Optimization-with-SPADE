@@ -47,7 +47,7 @@ import os
 # Adicionar o diretório pai ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from veiculos.algoritmo_tarefas import A_star_task_algorithm
+from algoritmo_tarefas import A_star_task_algorithm
 from world.graph import Graph
 
 
@@ -214,7 +214,7 @@ class Veiculo(Agent):
     """
 
 
-    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int,event_agent_jid):
+    def __init__(self, jid:str, password:str, max_fuel:int, capacity:int, max_orders:int, map: Graph, weight: float,current_location:int):
         """
         Inicializa um novo agente veículo.
         
@@ -247,7 +247,6 @@ class Veiculo(Agent):
         self.actual_route = [] # lista de tuplos (node_id, order_id)
         self.pending_orders = []
         self.time_to_finish_task = 0
-        self.event_agent_jid = event_agent_jid
         
         # Dicionário para armazenar múltiplas ordens aguardando confirmação
         # Key: orderid, Value: dict com order, can_fit, delivery_time, sender_jid
@@ -301,6 +300,13 @@ class Veiculo(Agent):
         self.add_behaviour(self.ReceiveOrdersBehaviour(), template=order_template)
         self.add_behaviour(self.WaitConfirmationBehaviour(), template=confirmation_template)
         self.add_behaviour(self.MovementBehaviour(), template=event_template)
+        
+        # Template para receber pedidos de presença
+        presence_template = Template()
+        presence_template.set_metadata("performative", "presence-info")
+        
+        # Adicionar behaviour para responder a pedidos de presença
+        self.add_behaviour(self.PresenceInfoBehaviour(), template=presence_template)
 
 
     class ReceiveOrdersBehaviour(CyclicBehaviour):
@@ -609,7 +615,34 @@ class Veiculo(Agent):
             # Adicionar o tempo que falta para terminar a rota atual
             current_route_time = self.agent.time_to_finish_task
             
-            return current_route_time + total_time       
+            return current_route_time + total_time
+        
+        async def recalculate_route(self):
+            """
+            Recalcula a rota otimizada com todas as ordens atuais usando A*.
+            
+            Executado após aceitar uma nova ordem que cabe na rota atual. Recalcula
+            o caminho ótimo para minimizar tempo total de entrega de todas as ordens.
+            
+            Side Effects:
+                - self.agent.actual_route: Atualizado com nova sequência (node_id, order_id)
+                - self.agent.time_to_finish_task: Atualizado com tempo total
+            
+            Note:
+                - Só executa se houver ordens (self.agent.orders não vazia)
+                - Usa current_location como ponto de partida
+                - Respeita restrições de capacity e max_fuel
+            """
+            if self.agent.orders:
+                route, time , _ = A_star_task_algorithm(
+                    self.agent.map,
+                    self.agent.current_location,
+                    self.agent.orders,
+                    self.agent.capacity,
+                    self.agent.max_fuel
+                )
+                self.agent.actual_route = route
+                self.agent.time_to_finish_task = time
     
     class WaitConfirmationBehaviour(CyclicBehaviour):
         """
@@ -695,8 +728,6 @@ class Veiculo(Agent):
                             show=PresenceShow.AWAY, 
                             status="Ocupado com tarefas"
                         )
-                        if not self.agent.next_node and self.agent.actual_route:
-                            self.agent.next_node = self.agent.actual_route[1][0]
                         print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
                         print(f"Rota recalculada: {self.agent.actual_route}")
                         print(f"Orders pendentes: {self.agent.pending_orders}")
@@ -794,7 +825,6 @@ class Veiculo(Agent):
             presence_show = self.agent.presence.get_show()
             
             if presence_show == PresenceShow.CHAT:
-                print(f"[{self.agent.name}] Veículo disponível - ignorando mensagens de movimento")
                 # Veículo disponível (sem tarefas) - não processa mensagens de movimento
                 return
             if msg:
@@ -813,8 +843,7 @@ class Veiculo(Agent):
                 if type == "arrival" and veiculo == self.agent.name:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
-                    if not order_id:
-                        self.agent.current_location, order_id = self.agent.actual_route.pop(0)
+                    
                     # Processar a primeira tarefa no nó
                     await self.process_node_arrival(self.agent.current_location, order_id)
                     
@@ -847,13 +876,17 @@ class Veiculo(Agent):
                         # Mover pending orders para orders
                         self.agent.orders = self.agent.pending_orders.copy()
                         self.agent.pending_orders = []
-                        self.agent.next_node = self.agent.actual_route[1][0]
-                    else:
-                        # Definir próximo nó
-                        if self.agent.actual_route[0][0] == None:
-                            self.agent.next_node = self.agent.actual_route[1][0]
-                        else:
-                            self.agent.next_node = self.agent.actual_route[0][0]
+                    
+                    # Calcular próximo nó e tempo restante
+                    if self.agent.actual_route:
+                        self.agent.next_node = self.agent.actual_route[0][0]
+                        _, _ , self.agent.time_to_finish_task = self.agent.map.djikstra(
+                            self.agent.current_location,
+                            self.agent.next_node
+                        )
+                        
+                        # Notificar event agent do tempo restante para próximo nó
+                        await self.notify_event_agent(self.agent.time_to_finish_task, self.agent.next_node)
                 else: 
                     # Movimento durante o trânsito
                     print(f"[{self.agent.name}] Movimento durante o trânsito")
@@ -876,7 +909,6 @@ class Veiculo(Agent):
                         self.agent.current_location,
                         self.agent.next_node
                     )
-                    print(f"[{self.agent.name}] Notificando event agent de {self.agent.current_location}- tempo até próximo nó ({self.agent.next_node}): {time_left}")
                     await self.notify_event_agent(time_left, self.agent.next_node)
         
         async def process_node_arrival(self, node_id: int, order_id: int):
@@ -1070,17 +1102,18 @@ class Veiculo(Agent):
                 - Só envia se event_agent_jid estiver configurado
                 - Retorna silenciosamente se atributo não existir
             """
+            if not hasattr(self.agent, 'event_agent_jid'):
+                return
             
             msg = Message(to=self.agent.event_agent_jid)
             msg.set_metadata("performative", "inform")
             msg.set_metadata("type", "time-update")
             
             data = {
-                "type": "arrival",
                 "vehicle_id": str(self.agent.jid),
                 "current_location": self.agent.current_location,
                 "next_node": next_node,
-                "time": time_left,
+                "time_left": time_left,
             }
             msg.body = json.dumps(data)
             await self.send(msg)
@@ -1223,5 +1256,68 @@ class Veiculo(Agent):
                     break
             
             return current_pos
+
+    class PresenceInfoBehaviour(CyclicBehaviour):
+        """
+        Behaviour cíclico que responde a pedidos de informação de presença.
+        
+        Este behaviour aguarda mensagens com performative="presence-info" e responde
+        com a informação atual de presença do veículo (status e disponibilidade).
+        
+        Formato da Mensagem Recebida:
+            - Metadata: performative="presence-info"
+            - Body: Qualquer conteúdo (ignorado)
+        
+        Formato da Resposta Enviada:
+            - Metadata: performative="presence-response"
+            - Body (JSON): {
+                "vehicle_id": str (JID do veículo),
+                "presence_type": str (AVAILABLE, UNAVAILABLE, etc.),
+                "presence_show": str (CHAT, AWAY, DND, XA),
+                "status": str (mensagem de status),
+                "current_location": int,
+                "current_load": int,
+                "current_fuel": int,
+                "active_orders": int,
+                "pending_orders": int
+              }
+        
+        Note:
+            - Sempre responde ao remetente da mensagem
+            - Timeout de 1s para evitar uso excessivo de CPU
+        """
+        
+        async def run(self):
+            msg = await self.receive(timeout=1)
+            
+            if msg:
+                print(f"[{self.agent.name}] 📩 Pedido de presença recebido de {msg.sender}")
+                
+                # Obter informações de presença atuais
+                presence_type = self.agent.presence.get_type()
+                presence_show = self.agent.presence.get_show()
+                presence_status = self.agent.presence.get_status()
+                
+                # Criar resposta com informações de presença e estado do veículo
+                reply = msg.make_reply()
+                reply.set_metadata("performative", "presence-response")
+                
+                response_data = {
+                    "vehicle_id": str(self.agent.jid),
+                    "presence_type": str(presence_type),
+                    "presence_show": str(presence_show),
+                    "status": presence_status if presence_status else "Sem status",
+                    "current_location": self.agent.current_location,
+                    "current_load": self.agent.current_load,
+                    "current_fuel": self.agent.current_fuel,
+                    "active_orders": len(self.agent.orders),
+                    "pending_orders": len(self.agent.pending_orders)
+                }
+                
+                reply.body = json.dumps(response_data)
+                
+                await self.send(reply)
+                print(f"[{self.agent.name}] ✅ Resposta de presença enviada para {msg.sender}")
+                print(f"  Status: {presence_show}, Localização: {self.agent.current_location}, Ordens ativas: {len(self.agent.orders)}")
 
                                      
