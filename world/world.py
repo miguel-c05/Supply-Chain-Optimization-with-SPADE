@@ -353,15 +353,48 @@ class World:
             self.graph.infected_edges.remove(edge_key)
         
     def get_events(self, delta_time):
-        """Avança o estado do mundo em um tick (a implementar)"""
-        for i in range(1, delta_time +  1):
-
-            if i % 2 == 0:
+        """
+        Avança o estado do mundo em delta_time ticks e retorna lista de eventos.
+        
+        Returns:
+            list: Lista de dicionários com informações das arestas que mudaram.
+                  Cada dicionário contém: node1_id, node2_id, new_time, 
+                  new_fuel_consumption, instant
+        """
+        events = []
+        
+        # Store initial edge states
+        initial_states = {}
+        for edge in self.graph.edges:
+            initial_states[(edge.node1.id, edge.node2.id)] = edge.weight
+        
+        # Simulate each tick
+        for i in range(delta_time):
+            if (i + 1) % 2 == 0:
                 self._restore_infected_edges()
 
             if self.tick_counter % self.traffic_interval == 0:
                 p = random.uniform(0, 1)
                 if p > self.traffic_probability:
                     self.traffic()
-
-        self.tick_counter += delta_time
+            
+            self.tick_counter += 1
+            
+            # Check which edges changed in this tick
+            for edge in self.graph.edges:
+                edge_key = (edge.node1.id, edge.node2.id)
+                if edge.weight != initial_states[edge_key]:
+                    # Edge changed - record the event
+                    edge.calculate_fuel_consumption()
+                    event = {
+                        "node1_id": edge.node1.id,
+                        "node2_id": edge.node2.id,
+                        "new_time": edge.weight,
+                        "new_fuel_consumption": round(edge.fuel_consumption, 3),
+                        "instant": i
+                    }
+                    events.append(event)
+                    # Update the initial state to current state
+                    initial_states[edge_key] = edge.weight
+        
+        return events
