@@ -74,7 +74,7 @@ class Veiculo(Agent):
         self.presence.approve_all=True
         self.presence.set_presence(presence_type=PresenceType.AVAILABLE,
                                    show=PresenceShow.CHAT)
-        
+        print(f"Presence {self.presence.get_show()} ")
         print(f"[{self.name}] Vehicle agent setup complete. Presence: AVAILABLE/CHAT")
         print(f"[{self.name}] Will automatically subscribe to suppliers through presence.approve_all")
         

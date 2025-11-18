@@ -271,15 +271,16 @@ class Supplier(Agent):
             
             n_available_vehicles = 0
             away_vehicles = []
-            
+            contacts=agent.presence.get_contacts()
+            print(f"contacts {contacts}")
             print(f"{agent.jid}> 📤 Requesting vehicle proposals...")
-            
+            print(f"{agent.jid}> Vehicles to contact: {agent.vehicles}")
             for vehicle_jid in agent.vehicles:
                 # Check if vehicle has presence information available
-                contact = agent.presence.get_contact(vehicle_jid)
-                if contact and contact.is_available():
-                    info : PresenceInfo = agent.presence.get_contact(vehicle_jid).get_presence()
-                    
+                contact = contacts[vehicle_jid]
+                if contact and contact:
+                    info : PresenceInfo = contact.get_presence()
+                    print(f"info: {info}")
                     if info.show == PresenceShow.CHAT:
                         n_available_vehicles += 1
                         msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)

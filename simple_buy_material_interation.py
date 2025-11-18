@@ -97,11 +97,11 @@ async def main():
     
     # Start all agents
     print("\n🚀 Starting agents...")
+    await vehicle1.start(auto_register=True)
+    await vehicle2.start(auto_register=True)
     await warehouse.start(auto_register=True)
     await supplier1.start(auto_register=True)
     await supplier2.start(auto_register=True)
-    await vehicle1.start(auto_register=True)
-    await vehicle2.start(auto_register=True)
     
     print("✅ All agents started!")
     
