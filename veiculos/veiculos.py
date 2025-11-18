@@ -289,7 +289,7 @@ class Veiculo(Agent):
         # Template para receber propostas de ordens dos warehouses
         order_template = Template()
         order_template.set_metadata("performative", "order-proposal")
-        
+        #dd
         # Template para receber confirmações dos warehouses
         confirmation_template = Template()
         confirmation_template.set_metadata("performative", "order-confirmation")
@@ -298,6 +298,9 @@ class Veiculo(Agent):
         # Não tem performative específico, então vamos filtrar por ausência dos performatives acima
         event_template = Template()
         event_template.set_metadata("performative", "inform")
+
+        inform_template = Template()
+        inform_template.set_metadata("perfomative", "presence-info")
         
         # Template para receber confirmações de pickup dos suppliers
         pickup_confirm_template = Template()
@@ -311,8 +314,7 @@ class Veiculo(Agent):
         self.add_behaviour(self.ReceiveOrdersBehaviour(), template=order_template)
         self.add_behaviour(self.WaitConfirmationBehaviour(), template=confirmation_template)
         self.add_behaviour(self.MovementBehaviour(), template=event_template)
-        self.add_behaviour(self.ReceivePickupConfirmation(), template=pickup_confirm_template)
-        self.add_behaviour(self.ReceiveDeliveryConfirmation(), template=delivery_confirm_template)
+        self.add_behaviour(self.PresenceInfoBehaviour(),template=inform_template)
 
 
     class ReceiveOrdersBehaviour(CyclicBehaviour):
@@ -1304,5 +1306,68 @@ class Veiculo(Agent):
                     break
             
             return current_pos
+
+    class PresenceInfoBehaviour(CyclicBehaviour):
+        """
+        Behaviour cíclico que responde a pedidos de informação de presença.
+        
+        Este behaviour aguarda mensagens com performative="presence-info" e responde
+        com a informação atual de presença do veículo (status e disponibilidade).
+        
+        Formato da Mensagem Recebida:
+            - Metadata: performative="presence-info"
+            - Body: Qualquer conteúdo (ignorado)
+        
+        Formato da Resposta Enviada:
+            - Metadata: performative="presence-response"
+            - Body (JSON): {
+                "vehicle_id": str (JID do veículo),
+                "presence_type": str (AVAILABLE, UNAVAILABLE, etc.),
+                "presence_show": str (CHAT, AWAY, DND, XA),
+                "status": str (mensagem de status),
+                "current_location": int,
+                "current_load": int,
+                "current_fuel": int,
+                "active_orders": int,
+                "pending_orders": int
+              }
+        
+        Note:
+            - Sempre responde ao remetente da mensagem
+            - Timeout de 1s para evitar uso excessivo de CPU
+        """
+        
+        async def run(self):
+            msg = await self.receive(timeout=1)
+            
+            if msg:
+                print(f"[{self.agent.name}] 📩 Pedido de presença recebido de {msg.sender}")
+                
+                # Obter informações de presença atuais
+                presence_type = self.agent.presence.get_type()
+                presence_show = self.agent.presence.get_show()
+                presence_status = self.agent.presence.get_status()
+                
+                # Criar resposta com informações de presença e estado do veículo
+                reply = msg.make_reply()
+                reply.set_metadata("performative", "presence-response")
+                
+                response_data = {
+                    "vehicle_id": str(self.agent.jid),
+                    "presence_type": str(presence_type),
+                    "presence_show": str(presence_show),
+                    "status": presence_status if presence_status else "Sem status",
+                    "current_location": self.agent.current_location,
+                    "current_load": self.agent.current_load,
+                    "current_fuel": self.agent.current_fuel,
+                    "active_orders": len(self.agent.orders),
+                    "pending_orders": len(self.agent.pending_orders)
+                }
+                
+                reply.body = json.dumps(response_data)
+                
+                await self.send(reply)
+                print(f"[{self.agent.name}] ✅ Resposta de presença enviada para {msg.sender}")
+                print(f"  Status: {presence_show}, Localização: {self.agent.current_location}, Ordens ativas: {len(self.agent.orders)}")
 
                                      
