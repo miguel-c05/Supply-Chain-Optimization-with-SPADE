@@ -285,7 +285,7 @@ class Veiculo(Agent):
         # Template para receber propostas de ordens dos warehouses
         order_template = Template()
         order_template.set_metadata("performative", "order-proposal")
-        
+        #dd
         # Template para receber confirmações dos warehouses
         confirmation_template = Template()
         confirmation_template.set_metadata("performative", "order-confirmation")
