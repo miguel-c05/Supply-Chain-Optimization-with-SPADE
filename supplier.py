@@ -244,6 +244,14 @@ class Supplier(Agent):
                 print(f"{agent.jid}> ⚠️ No vehicles found in presence contacts yet!")
             
             return len(vehicles) > 0
+        
+        def create_presence_info_message(self, to) -> Message:
+            self.agent : Supplier
+            
+            msg : Message = Message(to=to)
+            msg.set_metadata("performative", "presence-info")
+            msg.body = ""
+            return msg
             
         def create_call_for_proposal_message(self, to) -> Message:
             self.agent : Supplier
@@ -269,45 +277,43 @@ class Supplier(Agent):
                 print(f"{agent.jid}> Make sure vehicles are started and have subscribed to this supplier.")
                 return
             
-            n_available_vehicles = 0
-            away_vehicles = []
-            contacts=agent.presence.get_contacts()
-            print(f"contacts {contacts}")
             print(f"{agent.jid}> 📤 Requesting vehicle proposals...")
             print(f"{agent.jid}> Vehicles to contact: {agent.vehicles}")
+            
+            # Enviar mensagens de proposal a todos os veículos
+            # Não verificamos presença - deixamos cada veículo decidir se pode aceitar
+            n_available_vehicles = 0
+            away_vehicles = []
             for vehicle_jid in agent.vehicles:
-                # Check if vehicle has presence information available
-                contact = contacts[vehicle_jid]
-                if contact and contact:
-                    info : PresenceInfo = contact.get_presence()
-                    print(f"info: {info}")
-                    if info.show == PresenceShow.CHAT:
-                        n_available_vehicles += 1
-                        msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
-                        await self.send(msg)
-                        print(f"{agent.jid}> ✅ Sent order proposal to {vehicle_jid} (AVAILABLE)")
-                        
-                    elif info.show == PresenceShow.AWAY:
-                        away_vehicles.append(vehicle_jid)
-                        msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
-                        await self.send(msg)
-                        n_available_vehicles += 1
-                        print(f"{agent.jid}> ⚠️ Sent order proposal to {vehicle_jid} (AWAY - busy)")
-                else:
-                    # No presence info available, send proposal anyway
-                    print(f"{agent.jid}> ❓ No presence info for {vehicle_jid}. Sending proposal anyway.")
+                
+                msg : Message = self.create_presence_info_message(to=vehicle_jid)
+                await self.send(msg)
+                
+                behav = self.agent.ReceivePresenceInfo(vehicle_jid)
+                temp : Template = Template()
+                temp.set_metadata("performative", "presence-response")
+                self.agent.add_behaviour(behav, temp)
+                
+                await behav.join()
+                
+                if agent.latest_presence_info == PresenceShow.CHAT:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
                     n_available_vehicles += 1
+                    print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
+                
+                elif agent.latest_presence_info and n_available_vehicles == 0:
+                    away_vehicles.append(vehicle_jid)
+                    print(f"{agent.jid}> ⚠️ Vehicle {vehicle_jid} is away.")
+                    
+            if n_available_vehicles == 0:
+                print(f"{agent.jid}> ⚠️ No AVAILABLE vehicles found. All vehicles are AWAY.")
+                for vehicle_jid in away_vehicles:
+                    msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
+                    await self.send(msg)
+                    print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
             
-            # If there are no available vehicles, try to contact away vehicles
-            if n_available_vehicles == 0 and away_vehicles:
-                print(f"{agent.jid}> ⚠️ No available vehicles. Already sent to AWAY vehicles: {away_vehicles}")
-            
-            if n_available_vehicles == 0 and not away_vehicles:
-                print(f"{agent.jid}> ❌ WARNING: No vehicles available or contacted!")
-            else:
-                print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
+            print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
             behav = self.agent.ReceiveVehicleProposals(self.request_id)
             temp : Template = Template()
@@ -318,7 +324,24 @@ class Supplier(Agent):
             
             # Waits for all vehicle proposals to be received
             await behav.join()
-                    
+    
+    class ReceivePresenceInfo(OneShotBehaviour):
+        async def run(self):
+            agent : Supplier = self.agent
+            
+            msg : Message = await self.receive(timeout=10)
+            
+            if msg:
+                data = json.loads(msg.body)
+                presence_info = data["presence_show"]
+                print(f"{agent.jid}> Received presence info response from {msg.sender}:"
+                      f"{presence_info}")
+                agent.latest_presence_info = presence_info
+            else:
+                print(f"{agent.jid}> No presence info response received from vehicle.")
+            
+            
+                  
     class ReceiveVehicleProposals(OneShotBehaviour):
         def __init__(self, request_id):
             super().__init__()
@@ -532,7 +555,7 @@ class Supplier(Agent):
         
         # Identify vehicles from presence contacts (will be populated dynamically)
         self.vehicles = []
-        
+        self.latest_presence_info = None
         print(f"{self.jid}> Supplier initialized with INFINITE stock")
         self.print_stats()
         
