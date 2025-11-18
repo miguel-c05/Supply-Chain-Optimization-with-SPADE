@@ -55,6 +55,18 @@ class Event:
                 "time": self.time,
                 "vehicle": self.sender.split('@')[0],
             }
+        elif self.event_type == "Transit" or self.event_type == "transit":
+            return {
+                "type": self.event_type,
+                "time": self.time,
+                "data": self.data
+            }
+        else:
+            return {
+                "type": self.event_type,
+                "time": self.time,
+                "data": self.data
+            }
 
 
 class EventDrivenAgent(Agent):
@@ -65,7 +77,7 @@ class EventDrivenAgent(Agent):
     
     def __init__(self, jid: str, password: str, simulation_interval: float = 5.0, registered_vehicles: List[str] = [],
                  registered_warehouses: List[str] = [], registered_stores: List[str] = [],
-                 world_agent: str = None):
+                 world_agent: str = None, world_simulation_time: float = 10.0):
         super().__init__(jid, password)
         self.event_heap = []  # Min heap de eventos (não-trânsito)
         self.transit_events = []  # Lista separada para eventos de trânsito
@@ -74,6 +86,7 @@ class EventDrivenAgent(Agent):
         self.registered_warehouses = registered_warehouses  # Warehouses registrados
         self.registered_stores = registered_stores  # Stores registrados
         self.world_agent = world_agent  # Agente do mundo
+        self.world_simulation_time = world_simulation_time  # Tempo de simulação do mundo
         self.event_count = 0  # Contador de eventos recebidos
         self.processed_count = 0  # Contador de eventos processados
         self.last_simulation_time = 0.0  # Tempo da última simulação
@@ -84,20 +97,27 @@ class EventDrivenAgent(Agent):
         print(f"\n{'='*70}")
         print(f"[{self.name}] Event-Driven Agent iniciado")
         print(f"[{self.name}] Intervalo de simulação: {self.simulation_interval}s")
+        print(f"[{self.name}] Tempo de simulação do mundo: {self.world_simulation_time}s")
         print(f"{'='*70}\n")
         self.presence.approve_all = True
         
         # Subscribe a cada agente individualmente
         all_agents = self.registered_vehicles + self.registered_warehouses + self.registered_stores
+        if self.world_agent:
+            all_agents.append(self.world_agent)
+        
         for agent_jid in all_agents:
             self.presence.subscribe(agent_jid)
         
         self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
-    
+        
         # Behaviour para enviar mensagem sinaleira inicial
         initial_signal = self.SendInitialSignalBehaviour()
         self.add_behaviour(initial_signal)
         
+        # Behaviour para registrar o o transito
+        transit_registration_behaviour = self.RegisterTransitBehaviour()
+        self.add_behaviour(transit_registration_behaviour)
         # Behaviour para receber eventos continuamente
         receive_behaviour = self.ReceiveEventsBehaviour()
         self.add_behaviour(receive_behaviour)
@@ -108,6 +128,37 @@ class EventDrivenAgent(Agent):
         
         # Behaviour para registrar veículos
     
+    class RegisterTransitBehaviour(OneShotBehaviour):
+        """
+        Behaviour que solicita ao world agent para simular x segundos de trânsito.
+        Executa apenas uma vez no início do agente.
+        """
+        
+        async def run(self):
+            if not self.agent.world_agent:
+                print(f"[{self.agent.name}] ⚠️  World agent não configurado, pulando pedido de simulação")
+                return
+            
+            print(f"\n{'='*70}")
+            print(f"[{self.agent.name}] 🌍 SOLICITANDO SIMULAÇÃO DE TRÂNSITO AO WORLD AGENT")
+            print(f"  Destinatário: {self.agent.world_agent}")
+            print(f"  Tempo de simulação: {self.agent.world_simulation_time}s")
+            print(f"{'='*70}\n")
+            
+            # Criar mensagem de pedido de simulação
+            msg = Message(to=self.agent.world_agent)
+            msg.set_metadata("performative", "request")
+            msg.set_metadata("action", "simulate_traffic")
+            
+            data = {
+                "simulation_time": self.agent.world_simulation_time,
+                "requester": str(self.agent.jid)
+            }
+            msg.body = json.dumps(data)
+            
+            await self.send(msg)
+            print(f"[{self.agent.name}] ✅ Pedido de simulação de trânsito enviado ao world agent")
+        
     class SendInitialSignalBehaviour(OneShotBehaviour):
         """
         Behaviour que envia uma mensagem sinaleira inicial aos veículos.
@@ -156,6 +207,7 @@ class EventDrivenAgent(Agent):
     class ReceiveEventsBehaviour(CyclicBehaviour):
         """
         Behaviour cíclico que recebe eventos continuamente e adiciona à heap.
+        Processa mensagens do world agent contendo eventos de trânsito.
         """
         
         async def run(self):
@@ -163,6 +215,55 @@ class EventDrivenAgent(Agent):
             
             if msg:
                 try:
+                    # Verificar se é resposta do world agent com eventos de trânsito
+                    if msg.get_metadata("performative") == "inform" and msg.get_metadata("action") == "traffic_events":
+                        # Mensagem do world agent com eventos de trânsito
+                        data = json.loads(msg.body)
+                        events = data.get("events", [])
+                        
+                        print(f"\n{'='*70}")
+                        print(f"[{self.agent.name}] 🌍 EVENTOS DE TRÂNSITO DO WORLD AGENT RECEBIDOS")
+                        print(f"  Total de eventos: {len(events)}")
+                        print(f"{'='*70}\n")
+                        
+                        # Processar cada evento de trânsito
+                        for event_data in events:
+                            # Criar evento de trânsito
+                            transit_event = Event(
+                                event_type="Transit",
+                                time=event_data.get("new_time", 0.0),
+                                data={
+                                    "edges": [{
+                                        "node1": event_data.get("node1_id"),
+                                        "node2": event_data.get("node2_id"),
+                                        "weight": event_data.get("new_time"),
+                                        "fuel_consumption": event_data.get("new_fuel_consumption")
+                                    }]
+                                },
+                                sender=str(msg.sender),
+                                timestamp=event_data.get("timestamp")
+                            )
+                            
+                            # Adicionar à lista de eventos de trânsito
+                            self.agent.transit_events.append(transit_event)
+                            print(f"[{self.agent.name}] 📩 Evento de trânsito adicionado: Edge ({event_data.get('node1_id')} → {event_data.get('node2_id')}), time={event_data.get('new_time')}, instant={event_data.get('instant')}")
+                        
+                        print(f"[{self.agent.name}] ✅ Total de eventos de trânsito: {len(self.agent.transit_events)}")
+                        
+                        # Criar evento para solicitar nova simulação após world_simulation_time
+                        resimulation_event = Event(
+                            event_type="updatesimulation",
+                            time=self.agent.world_simulation_time,
+                            data={"action": "request_new_simulation"},
+                            sender=str(self.agent.jid),
+                            timestamp=datetime.now().isoformat()
+                        )
+                        heapq.heappush(self.agent.event_heap, resimulation_event)
+                        print(f"[{self.agent.name}] 🔄 Evento de re-simulação agendado para {self.agent.world_simulation_time}s\n")
+                        
+                        return
+                    
+                    # Processar outros eventos normalmente
                     data = json.loads(msg.body)
                     event_type = data.get("type")
                     time = data.get("time", 0.0)
@@ -177,11 +278,11 @@ class EventDrivenAgent(Agent):
                         timestamp=data.get("timestamp")
                     )
                     
-                    # Verificar se é evento de trânsito
+                    # Verificar se é evento de trânsito manual (não do world agent)
                     if event_type == "transit" or event_type == "Transit":
                         # Adicionar à lista de trânsito
                         self.agent.transit_events.append(event)
-                        print(f"[{self.agent.name}] 📩 Evento de trânsito recebido: {event}")
+                        print(f"[{self.agent.name}] 📩 Evento de trânsito manual recebido: {event}")
                         print(f"   Eventos de trânsito: {len(self.agent.transit_events)}")
                     else:
                         # Adicionar à heap
@@ -284,10 +385,24 @@ class EventDrivenAgent(Agent):
                     print(f"\n[{self.agent.name}] 📢 Notificando evento ARRIVAL para {len(recipients)} veículos")
                 
                 elif event.event_type == "updatesimulation":
-                    # Update: apenas agente do mundo
+                    # Update: solicitar nova simulação ao world agent
                     if self.agent.world_agent:
-                        recipients = [self.agent.world_agent]
-                        print(f"\n[{self.agent.name}] 📢 Notificando evento UPDATESIMULATION para agente do mundo")
+                        print(f"\n[{self.agent.name}] 📢 Processando evento UPDATESIMULATION - Solicitando nova simulação")
+                        
+                        # Enviar pedido de nova simulação ao world agent
+                        msg = Message(to=self.agent.world_agent)
+                        msg.set_metadata("performative", "request")
+                        msg.set_metadata("action", "simulate_traffic")
+                        
+                        data = {
+                            "simulation_time": self.agent.world_simulation_time,
+                            "requester": str(self.agent.jid)
+                        }
+                        msg.body = json.dumps(data)
+                        
+                        await self.send(msg)
+                        print(f"[{self.agent.name}]   → Pedido de re-simulação enviado ao world agent")
+                        continue
                     else:
                         print(f"\n[{self.agent.name}] ⚠️  Agente do mundo não registrado, evento ignorado")
                         continue
@@ -323,6 +438,8 @@ async def main():
     # Configurações dos agentes
     EVENT_AGENT_JID = "event_agent@localhost"
     EVENT_AGENT_PASSWORD = "event123"
+    WORLD_AGENT_JID = "world@localhost"
+    WORLD_AGENT_PASSWORD = "password"
     WAREHOUSE_JID = "warehouse_test@localhost"
     WAREHOUSE_PASSWORD = "warehouse123"
     VEHICLE_JID = "vehicle1@localhost"
@@ -331,7 +448,7 @@ async def main():
     VEHICLE_PASSWORD_2 = "vehicle234"
     
     print("="*70)
-    print("TESTE DO EVENT-DRIVEN AGENT")
+    print("TESTE DO EVENT-DRIVEN AGENT COM WORLD AGENT")
     print("="*70)
     
     # Criar o mundo
@@ -341,14 +458,14 @@ async def main():
         height=4,
         mode="different", 
         max_cost=4, 
-        gas_stations=2, 
-        warehouses=5,
-        suppliers=2, 
-        stores=6, 
+        gas_stations=0, 
+        warehouses=1,
+        suppliers=1, 
+        stores=1, 
         highway=True,
-        traffic_probability=0.3,
-        traffic_spread_probability=0.7,
-        traffic_interval=3,
+        traffic_probability=0.5,
+        traffic_spread_probability=0.8,
+        traffic_interval=2,
         untraffic_probability=0.4
     )
     
@@ -370,7 +487,7 @@ async def main():
         return
     
     initial_location = store_locations[0]
-    initial_location1 = store_locations[1]
+    initial_location1 = store_locations[0]
     
     print(f"\n🚚 Criando veículo...")
     print(f"   Localização inicial: {initial_location}")
@@ -401,7 +518,7 @@ async def main():
         event_agent_jid=EVENT_AGENT_JID
     )
     
-    # Criar event agent com lista de veículos registrados
+    # Criar event agent com lista de veículos registrados e world agent
     print(f"\n⚙️ Criando Event Agent...")
     event_agent = EventDrivenAgent(
         jid=EVENT_AGENT_JID,
@@ -409,8 +526,15 @@ async def main():
         simulation_interval=5.0,
         registered_vehicles=[VEHICLE_JID, VEHICLE_JID_2],
         registered_warehouses=[WAREHOUSE_JID],
-        registered_stores=[]
+        registered_stores=[],
+        world_agent=WORLD_AGENT_JID,
+        world_simulation_time=10.0
     )
+    
+    # Criar world agent com o world já instanciado
+    print(f"\n🌍 Criando World Agent...")
+    from world_agent import WorldAgent
+    world_agent = WorldAgent(WORLD_AGENT_JID, WORLD_AGENT_PASSWORD, world=world)
     
     # Criar warehouse de teste
     print(f"\n📦 Criando Warehouse de teste...")
@@ -434,6 +558,12 @@ async def main():
     
     # Iniciar todos os agentes
     print("\n🚀 Iniciando agentes...")
+    
+    # Iniciar world agent primeiro
+    print(f"🌍 Iniciando World Agent...")
+    await world_agent.start()
+    print(f"✓ World Agent iniciado: {WORLD_AGENT_JID}")
+    
     await vehicle.start()
     print(f"✓ Veículo iniciado: {VEHICLE_JID}")
     await vehicle_2.start()
@@ -445,6 +575,7 @@ async def main():
     
     print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
     print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
+    print(f"[SISTEMA] 🚦 Event Agent solicitando simulação de tráfego ao World Agent")
     print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
     print(f"[SISTEMA] 🗺️  Usando {len(warehouse.warehouse_locations)} warehouses e {len(warehouse.store_locations)} stores")
     print(f"[SISTEMA] 🚚 Veículo em localização {initial_location}")
