@@ -40,7 +40,7 @@ class Store(Agent):
     #         WAREHOUSE <-> STORE
     # ------------------------------------------
     
-    class BuyProduct(OneShotBehaviour):
+    class BuyProduct(OneShotBehaviour): # TODO - make this a PeriodicBehaviour
         def __init__(self, quantity : int, product : str):
             super().__init__()
             self.quantity = quantity

@@ -112,7 +112,12 @@ class Order:
         self.fuel = None
         self.comecou = False
         
-
+    def __str__(self):
+        return (f"Order(id={self.orderid}, product={self.product}, qty={self.quantity}, "
+                f"sender={self.sender}, receiver={self.receiver}, "
+                f"sender_loc={self.sender_location}, receiver_loc={self.receiver_location}, "
+                f"time={self.deliver_time}, fuel={self.fuel}, started={self.comecou})")
+        
     def time_to_deliver(self,sender_location:int,receiver_location:int ,map: Graph,weight: float):
         """
         Calcula o tempo de entrega, rota e combustível necessário usando Dijkstra.
@@ -282,9 +287,8 @@ class Veiculo(Agent):
         self.presence.approve_all=True
         self.presence.set_presence(presence_type=PresenceType.AVAILABLE,
                                    show=PresenceShow.CHAT)
-        print(f"Presence {self.presence.get_show()} ")
+        
         print(f"[{self.name}] Vehicle agent setup complete. Presence: AVAILABLE/CHAT")
-        print(f"[{self.name}] Will automatically subscribe to suppliers through presence.approve_all")
         
         # Template para receber propostas de ordens dos warehouses
         order_template = Template()
@@ -300,7 +304,7 @@ class Veiculo(Agent):
         event_template.set_metadata("performative", "inform")
 
         inform_template = Template()
-        inform_template.set_metadata("perfomative", "presence-info")
+        inform_template.set_metadata("performative", "presence-info")
         
         # Template para receber confirmações de pickup dos suppliers
         pickup_confirm_template = Template()
@@ -315,6 +319,8 @@ class Veiculo(Agent):
         self.add_behaviour(self.WaitConfirmationBehaviour(), template=confirmation_template)
         self.add_behaviour(self.MovementBehaviour(), template=event_template)
         self.add_behaviour(self.PresenceInfoBehaviour(),template=inform_template)
+        self.add_behaviour(self.ReceivePickupConfirmation(),template=pickup_confirm_template)
+        self.add_behaviour(self.ReceiveDeliveryConfirmation(),template=delivery_confirm_template)
 
 
     class ReceiveOrdersBehaviour(CyclicBehaviour):
@@ -407,7 +413,7 @@ class Veiculo(Agent):
                 proposal_msg.body = json.dumps(proposal_data)
                 await self.send(proposal_msg)
                 
-                print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}")
+                print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}, order route={order.route}")
                     
                 # Guardar informações no dicionário de confirmações pendentes
                 self.agent.pending_confirmations[order.orderid] = {
@@ -493,17 +499,23 @@ class Veiculo(Agent):
             # CHAT = disponível (sem tarefas), AWAY = ocupado (com tarefas)
             presence_show = self.agent.presence.get_show()
             
-            print(f"Presence atual - Show: {presence_show}")
             
             # Se está em CHAT (disponível), não tem tarefas ativas
             if presence_show == PresenceShow.CHAT:
-                return True, new_order.deliver_time
+                _ , order_time, _= A_star_task_algorithm(
+                self.agent.map,
+                self.agent.current_location,
+                [new_order],
+                self.agent.capacity,
+                self.agent.max_fuel)
+                return True, order_time
             
             # Criar um dicionário com as ordens atuais para acesso rápido
             orders_dict = {order.orderid: order for order in self.agent.orders}
             
             # Verificar se a nova ordem passa por algum ponto da rota atual
             route_nodes = [node_id for node_id, _ in self.agent.actual_route]
+
             passes_through_sender = new_order.sender_location in route_nodes
             
             # Se não passa pelo sender, calcular tempo com pending orders
@@ -545,7 +557,6 @@ class Veiculo(Agent):
                     new_order_delivered = True
                     delivery_time = cumulative_time
                     # Entregou o item - pode parar de simular
-                    print(f"Debug1")
                     return True, delivery_time
                 
                 # Processar a ordem existente neste ponto
@@ -572,7 +583,6 @@ class Veiculo(Agent):
                 return False, future_time
             
             # Se entregou, retornar sucesso (não deveria chegar aqui pois retorna no loop)
-            print(f"Debug2")
             return True, delivery_time
         
         async def calculate_future_delivery_time(self, order: Order) -> float:
@@ -623,7 +633,6 @@ class Veiculo(Agent):
                 self.agent.capacity,
                 self.agent.max_fuel
             )
-            
             # Adicionar o tempo que falta para terminar a rota atual
             current_route_time = self.agent.time_to_finish_task
             
@@ -716,8 +725,7 @@ class Veiculo(Agent):
                         if not self.agent.next_node and self.agent.actual_route:
                             self.agent.next_node = self.agent.actual_route[1][0]
                         print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
-                        print(f"Rota recalculada: {self.agent.actual_route}")
-                        print(f"Orders pendentes: {self.agent.pending_orders}")
+                        print(f"Rota recalculada")
                     else:
                         print(f"[{self.agent.name}] Ordem {order.orderid} rejeitada pelo warehouse")
                     
@@ -727,6 +735,8 @@ class Veiculo(Agent):
                     
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"[{self.agent.name}] Erro ao processar confirmação: {e}")
+            else:
+                pass  # Nenhuma mensagem recebida, aguardar próximo ciclo
         
         async def recalculate_route(self):
             """
@@ -780,8 +790,7 @@ class Veiculo(Agent):
             if msg:
                 try:
                     data = json.loads(msg.body)
-                    orderid = data.get("orderid")
-                    
+                    orderid = data["orderid"]
                     print(f"[{self.agent.name}] ✅ Confirmação de delivery recebida de {msg.sender} para ordem {orderid}")
                     
                 except (json.JSONDecodeError, KeyError) as e:
@@ -852,15 +861,17 @@ class Veiculo(Agent):
             if msg:
                 # print a mensagem recebida
                 print(f"[{self.agent.name}] Mensagem recebida no MovementBehaviour")
-                print(f"  Body: {msg.body}")
-                print(f"  Metadata: {msg.metadata}")
-                
+                if self.agent.verbose:
+                    print(f"  Body: {msg.body}")
+                    print(f"  Metadata: {msg.metadata}")
+                    
                 data = json.loads(msg.body)
                 type = data.get("type")
                 time = data.get("time")
                 veiculo = data.get("vehicle", None)
                 
-                print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
+                if self.agent.verbose:
+                    print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
                 
                 if type == "arrival" and veiculo == self.agent.name:
                     # Chegou a um nó - processar chegada
@@ -885,7 +896,8 @@ class Veiculo(Agent):
                                 show=PresenceShow.CHAT,
                                 status="Disponível para novas ordens"
                             )
-                            print(f"[{self.agent.name}] Status alterado para AVAILABLE - sem tarefas")
+                            if self.agent.verbose:
+                                print(f"[{self.agent.name}] Status alterado para AVAILABLE - sem tarefas")
                             return
                         
                         # Há pending orders - calcular nova rota
@@ -908,17 +920,21 @@ class Veiculo(Agent):
                             self.agent.next_node = self.agent.actual_route[0][0]
                 else: 
                     # Movimento durante o trânsito
-                    print(f"[{self.agent.name}] Movimento durante o trânsito")
-                    print(f"[{self.agent.name}] Tempo disponível para mover: {time}")
-                    print(f"[{self.agent.name}] localização atual antes de mover: {self.agent.current_location}")
+                    if self.agent.verbose:
+                        print(f"[{self.agent.name}] Movimento durante o trânsito")
+                        print(f"[{self.agent.name}] Tempo disponível para mover: {time}")
+                        print(f"[{self.agent.name}] localização atual antes de mover: {self.agent.current_location}")
                     temp_location = self.agent.current_location
                     self.agent.current_location = await self.update_location_and_time(time)
+                    
                     print(f"[{self.agent.name}] localização atual após mover: {self.agent.current_location}")
                     _, _, tempo_simulado = self.agent.map.djikstra(temp_location, self.agent.current_location)
-                    print(f"[{self.agent.name}] Tempo simulado para mover: {tempo_simulado}")
+                    if self.agent.verbose:
+                        print(f"[{self.agent.name}] Tempo simulado para mover: {tempo_simulado}")
                     
                 if type == "Transit":
-                    print("Atualizar transito")
+                    if self.agent.verbose:
+                        print("Atualizar transito")
                     # Atualizar mapa com novas informações de trânsito
                     await self.update_map(data.get("data"))
                 
@@ -1007,7 +1023,8 @@ class Veiculo(Agent):
                     show=PresenceShow.AWAY,
                     status=f"Entregando ordem {order.orderid}"
                 )
-                print(f"[{self.agent.name}] Status alterado para AWAY - processando ordem {order.orderid}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Status alterado para AWAY - processando ordem {order.orderid}")
                 
                 # Notificar supplier que fez pickup
                 await self.notify_supplier_pickup(order)
@@ -1344,13 +1361,14 @@ class Veiculo(Agent):
                 print(f"[{self.agent.name}] 📩 Pedido de presença recebido de {msg.sender}")
                 
                 # Obter informações de presença atuais
-                presence_type = self.agent.presence.get_type()
+                presence_type = self.agent.presence.get_presence().type
                 presence_show = self.agent.presence.get_show()
                 presence_status = self.agent.presence.get_status()
                 
                 # Criar resposta com informações de presença e estado do veículo
                 reply = msg.make_reply()
                 reply.set_metadata("performative", "presence-response")
+                reply.set_metadata("vehicle_id", str(self.agent.jid))
                 
                 response_data = {
                     "vehicle_id": str(self.agent.jid),
