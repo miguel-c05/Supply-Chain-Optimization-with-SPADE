@@ -451,11 +451,15 @@ class Supplier(Agent):
             msg : Message = await self.receive(timeout=20)
             
             if msg != None:
-                delta = int(msg.body) # TODO -- assumes body holds ONLY the delta time
-                self.current_time += delta
+                data = json.loads(msg.body)
                 
-                # TODO -- implement update graph  
-                agent.update_graph(msg)
+                type : str = data["type"]
+                delta : int = data["time"]
+                agent.current_tick += delta
+                
+                if type.lower() != "arrival":
+                    map_updates = data["data"] 
+                agent.update_graph(map_updates)
     
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
@@ -482,23 +486,16 @@ class Supplier(Agent):
         
         print("="*40)
 
-    def update_graph(self, msg : Message):
-        # Parse message body - each line contains: startnode endnode newweight
-        lines = msg.body.strip().split('\n')
-        for line in lines:
-            parts = line.strip().split()
-            if len(parts) == 3:
-                try:
-                    start_node = int(parts[0])
-                    end_node = int(parts[1])
-                    new_weight = float(parts[2])
-                    # Update the edge weight in the graph
-                    edge : Edge = self.map.get_edge(start_node, end_node)
+    def update_graph(self, traffic_data) -> None:
+        for edge_info in traffic_data.get("edges", []):
+                node1_id = edge_info.get("node1")
+                node2_id = edge_info.get("node2")
+                new_weight = edge_info.get("weight")
+                
+                edge : Edge = self.map.get_edge(node1_id, node2_id)
+                if edge:
                     edge.weight = new_weight
-                    print(f"{self.jid}> Updated edge ({start_node}, {end_node}) with weight {new_weight}")
-                except (ValueError, AttributeError) as e:
-                    print(f"{self.jid}> Error updating graph edge: {e}")
-    
+
     def message_to_order(self, msg : Message) -> Order:
         """
         Convert a store-confirm message to an Order object.
@@ -598,87 +595,3 @@ class Supplier(Agent):
         pickup_template = Template()
         pickup_template.set_metadata("performative", "vehicle-pickup")
         self.add_behaviour(pickup_behav, pickup_template)
-
-
-"""
-=================================
-        MAIN FOR TESTING
-=================================
-"""
-async def main():
-    supplier_agent = Supplier("supplier@localhost", "password")
-    
-    try:
-        await supplier_agent.start(auto_register=True)
-        print("Supplier agent started successfully!")
-    except Exception as e:
-        print(f"Failed to start supplier agent: {e}")
-        return
-    
-    # Simulate buy requests from warehouses
-    class SendFirstBuyRequest(OneShotBehaviour):
-        async def run(self):
-            await asyncio.sleep(1)
-            msg = Message(to="supplier@localhost")
-            msg.set_metadata("performative", "warehouse-buy")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "1")
-            msg.body = "50 A"
-            await self.send(msg)
-            print("First buy request sent: 50 units of A")
-    
-    supplier_agent.add_behaviour(SendFirstBuyRequest())
-    
-    class SendSecondBuyRequest(OneShotBehaviour):
-        async def run(self):
-            await asyncio.sleep(1.5)
-            msg = Message(to="supplier@localhost")
-            msg.set_metadata("performative", "warehouse-buy")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "2")
-            msg.body = "100 B"
-            await self.send(msg)
-            print("Second buy request sent: 100 units of B")
-    
-    supplier_agent.add_behaviour(SendSecondBuyRequest())
-    
-    # Simulate confirmations from warehouses
-    class SendFirstConfirmation(OneShotBehaviour):
-        async def run(self):
-            await asyncio.sleep(3)
-            msg = Message(to="supplier@localhost")
-            msg.set_metadata("performative", "warehouse-confirm")
-            msg.set_metadata("supplier_id", "supplier@localhost")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "1")
-            msg.body = "50 A"
-            await self.send(msg)
-            print("First confirmation sent!")
-    
-    supplier_agent.add_behaviour(SendFirstConfirmation())
-    
-    class SendSecondConfirmation(OneShotBehaviour):
-        async def run(self):
-            await asyncio.sleep(3.5)
-            msg = Message(to="supplier@localhost")
-            msg.set_metadata("performative", "warehouse-confirm")
-            msg.set_metadata("supplier_id", "supplier@localhost")
-            msg.set_metadata("warehouse_id", "warehouse@localhost")  # self-send for test
-            msg.set_metadata("request_id", "2")
-            msg.body = "100 B"
-            await self.send(msg)
-            print("Second confirmation sent!")
-    
-    supplier_agent.add_behaviour(SendSecondConfirmation())
-    
-    await asyncio.sleep(5)
-    
-    # Print final stats
-    print("\n=== FINAL SUPPLIER STATS ===")
-    supplier_agent.print_stats()
-    
-    await spade.wait_until_finished(supplier_agent)
-    
-    
-if __name__ == "__main__":
-    spade.run(main())

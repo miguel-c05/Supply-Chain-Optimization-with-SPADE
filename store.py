@@ -365,8 +365,7 @@ class Store(Agent):
                 agent.current_tick += delta
                 
                 if type.lower() == "transit":
-                    map_updates = data["data"]                 
-                    # TODO -- implement update graph  
+                    map_updates = data["data"]
                     agent.update_graph(map_updates)         
     
     class ReceiveVehicleArrival(CyclicBehaviour):
