@@ -325,9 +325,7 @@ class Supplier(Agent):
             
             print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
-            behav = self.agent.ReceiveVehicleProposals(self.request_id)
-            temp : Template = Template()
-            temp.set_metadata("performative", "vehicle-proposal")
+            behav = self.agent.ChooseBestVehicle(self.request_id)
             self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
@@ -347,8 +345,33 @@ class Supplier(Agent):
                 agent.presence_infos[msg.get_metadata("vehicle_id")] = presence_info
             else:
                 print(f"{agent.jid}> No presence info response received from vehicle.")
-                  
-    class ReceiveVehicleProposals(OneShotBehaviour):
+    
+    class ReceiveVehicleProposals(CyclicBehaviour):
+        
+        async def run(self):
+            agent : Supplier = self.agent
+            
+            while True:
+                msg : Message = await self.receive(timeout=5)
+                
+                if msg:
+                    print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
+                    data = json.loads(msg.body)
+                    
+                    # A proposta do veículo não é uma Order, são apenas dados da proposta
+                    order_id = data["orderid"]
+                    sender_jid = str(msg.sender)
+                    can_fit = data["can_fit"]
+                    time = data["delivery_time"]
+                    
+                    agent.vehicle_proposals[int(order_id)][sender_jid] = (can_fit, time)
+                    print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
+  
+                else: 
+                    print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
+                    break
+                 
+    class ChooseBestVehicle(OneShotBehaviour):
         def __init__(self, request_id):
             super().__init__()
             self.request_id = request_id
@@ -372,27 +395,8 @@ class Supplier(Agent):
             agent : Supplier = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
             
-            proposals = {}  # vehicle_jid : (can_fit, time)
-            
-            while True:
-                msg : Message = await self.receive(timeout=5)
-                
-                if msg:
-                    print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
-                    data = json.loads(msg.body)
-                    
-                    # A proposta do veículo não é uma Order, são apenas dados da proposta
-                    order_id = data["orderid"]
-                    sender_jid = str(msg.sender)
-                    can_fit = data["can_fit"]
-                    time = data["delivery_time"]
-                    
-                    proposals[sender_jid] = (can_fit, time)
-                    print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
-  
-                else: 
-                    print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
-                    break
+            order_proposals =  agent.vehicle_proposals[int(self.request_id)]
+            proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
             
             print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
             best_vehicle = self.get_best_vehicle(proposals)
@@ -404,7 +408,7 @@ class Supplier(Agent):
                 msg : Message = Message(to=best_vehicle)
                 msg.set_metadata("performative", "order-confirmation")
                 
-                order : Order = agent.pending_deliveries[order_id]
+                order : Order = agent.pending_deliveries[self.request_id]
                 order_data = {
                     "orderid" : order.orderid,
                     "confirmed" : True
@@ -412,7 +416,7 @@ class Supplier(Agent):
                 msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
-                print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {order_id}")
+                print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
                 
                 # Send rejection to all other vehicles
                 rejected_vehicles = [jid for jid in proposals.keys() if jid != best_vehicle]
@@ -428,7 +432,7 @@ class Supplier(Agent):
                     reject_msg.body = json.dumps(reject_data)
                     
                     await self.send(reject_msg)
-                    print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {order_id}")
+                    print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {self.request_id}")
             else:
                 print(f"{agent.jid}> ⚠️ No vehicles available to assign!")
     
@@ -562,7 +566,7 @@ class Supplier(Agent):
         
         # Track pending deliveries by order_id
         self.pending_deliveries : dict[int, Order] = {}
-        
+        self.vehicle_proposals : dict[int, dict[str, tuple[bool, int]]] = {}
         # Identify vehicles from presence contacts (will be populated dynamically)
         self.vehicles = []
         self.presence_infos : dict[str, str] = {}
@@ -574,6 +578,12 @@ class Supplier(Agent):
         template = Template()
         template.set_metadata("performative", "warehouse-buy")
         self.add_behaviour(behav, template)
+        
+        # Add behaviour to receive vehicle proposals
+        vehicle_proposal_behav = self.ReceiveVehicleProposals()
+        vehicle_proposal_template = Template()
+        vehicle_proposal_template.set_metadata("performative", "vehicle-proposal")
+        self.add_behaviour(vehicle_proposal_behav, vehicle_proposal_template)
         
         # Add behaviour to receive vehicle pickup notifications
         pickup_behav = self.ReceiveVehicleArrival()
