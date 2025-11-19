@@ -326,7 +326,7 @@ class EventDrivenAgent(Agent):
     """
     
     def __init__(self, jid: str, password: str, simulation_interval: float, registered_vehicles: List[str],
-                 registered_warehouses: List[str], registered_stores: List[str] ,
+                 registered_warehouses: List[str], registered_stores: List[str] ,registered_suppliers: List[str],
                  world_agent: str, world_simulation_time: float, verbose: bool):
         """
         Inicializa o EventDrivenAgent com configurações de simulação e agentes registados.
@@ -386,6 +386,7 @@ class EventDrivenAgent(Agent):
         self.registered_vehicles = registered_vehicles  # Veículos registrados
         self.registered_warehouses = registered_warehouses  # Warehouses registrados
         self.registered_stores = registered_stores  # Stores registrados
+        self.registered_suppliers = registered_suppliers  # Suppliers registrados
         self.world_agent = world_agent  # Agente do mundo
         self.world_simulation_time = world_simulation_time  # Tempo de simulação do mundo
         self.event_count = 0  # Contador de eventos recebidos
@@ -1197,7 +1198,10 @@ class EventDrivenAgent(Agent):
                     print(f"\n[{self.agent.name}] 📢 Notificando evento ARRIVAL agrupado para {len(self.agent.registered_vehicles)} veículos")
 
                 # Enviar uma única mensagem para todos os veículos registrados
-                for recipient_jid in self.agent.registered_vehicles:
+                recipients = (self.agent.registered_vehicles + 
+                            self.agent.registered_stores
+                            ) # TODO + self.agent.registered_warehouses + self.agent.registered_suppliers
+                for recipient_jid in recipients:
                     msg = Message(to=recipient_jid)
                     msg.set_metadata("performative", "inform")
                     msg.set_metadata("event_type", "arrival")
@@ -1220,8 +1224,8 @@ class EventDrivenAgent(Agent):
             # Processar eventos de trânsito
             for idx, event in enumerate(transit_events):
                 recipients = (self.agent.registered_vehicles + 
-                            self.agent.registered_warehouses + 
-                            self.agent.registered_stores)
+                            self.agent.registered_stores
+                            ) # TODO + self.agent.registered_warehouses + self.agent.registered_suppliers
                 if self.agent.verbose:
                     print(f"\n[{self.agent.name}] 📢 Notificando evento TRANSIT para {len(recipients)} agentes")
                 
@@ -1507,6 +1511,13 @@ async def main():
         graph=world.graph,
         node_id=store_locations[0])
     
+    supplier_1= Supplier(
+        jid=SUPLIER_JID,
+        password=SUPLIER_PASSWORD,
+        graph=world.graph,
+        node_id=suplier_locations[0])
+    
+    
     # Criar event agent com lista de veículos registrados e world agent
     print(f"\n⚙️ Criando Event Agent...")
     event_agent = EventDrivenAgent(
@@ -1563,16 +1574,24 @@ async def main():
     await vehicle_3.start()
     print(f"✓ Veículo iniciado: {VEHICLE_JID_3}")
     
-    await warehouse.start()
-    print(f"✓ Warehouse de teste iniciado: {WAREHOUSE_JID}")
+    await warehouse_1.start()
+    print(f"✓ Warehouse iniciado: {WAREHOUSE_JID}")
+
+    await supplier_1.start()
+    print(f"✓ Supplier iniciado: {SUPLIER_JID}")
+
+    await store_1.start()
+    print(f"✓ Store iniciado: {STORE_JID}")
+
     await event_agent.start(auto_register=True)
     print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
+
+    
     
     print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
     print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
     print(f"[SISTEMA] 🚦 Event Agent solicitando simulação de tráfego ao World Agent")
     print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
-    print(f"[SISTEMA] 🗺️  Usando {len(warehouse.warehouse_locations)} warehouses e {len(warehouse.store_locations)} stores")
     print(f"[SISTEMA] 🚚 Veículo em localização {initial_location}")
     print(f"[SISTEMA] ⌨️  Pressione Ctrl+C para parar\n")
     
@@ -1584,8 +1603,13 @@ async def main():
         print("\n[SISTEMA] Parando agentes...")
     finally:
         await event_agent.stop()
-        await warehouse.stop()
+        await warehouse_1.stop()
+        await supplier_1.stop()
+        await store_1.stop()
         await vehicle.stop()
+        await vehicle_2.stop()
+        await vehicle_3.stop()
+        await world_agent.stop()
         print("[SISTEMA] ✓ Agentes parados!")
 
 
