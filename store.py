@@ -67,12 +67,18 @@ class Store(Agent):
                 return
             else: pass
             
+            # Randomize quantity and product for each purchase
             if self.quantity is None: 
-                self.quantity = random.randint(1, agent.max_buy_quantity)
-            if self.product is None:
-                self.product = random.choice(agent.product_list)
+                quantity = random.randint(1, agent.max_buy_quantity)
+            else:
+                quantity = self.quantity
                 
-            print(f"{agent.jid}> Preparing to buy {self.quantity} units of {self.product}")
+            if self.product is None:
+                product = random.choice(agent.product_list)
+            else:
+                product = self.product
+                
+            print(f"{agent.jid}> Preparing to buy {quantity} units of {product}")
             
             contacts = list(agent.presence.contacts.keys())
             
@@ -87,7 +93,7 @@ class Store(Agent):
                 msg.set_metadata("store_id", str(agent.jid))
                 msg.set_metadata("node_id", str(agent.node_id))
                 msg.set_metadata("request_id", str(request_id_for_template))
-                msg.body = f"{self.quantity} {self.product}"
+                msg.body = f"{quantity} {product}"
                 
                 if agent.verbose:
                     print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
@@ -104,8 +110,8 @@ class Store(Agent):
                     msg, 
                     request_id_for_template, 
                     len(contacts),
-                    self.quantity,
-                    self.product
+                    quantity,
+                    product
                 )
                 agent.add_behaviour(behav)
                 
@@ -358,7 +364,7 @@ class Store(Agent):
                 delta : int = data["time"]
                 agent.current_tick += delta
                 
-                if type.lower() != "arrival":
+                if type.lower() == "transit":
                     map_updates = data["data"]                 
                     # TODO -- implement update graph  
                     agent.update_graph(map_updates)         
@@ -473,7 +479,7 @@ class Store(Agent):
                 node2_id = edge_info.get("node2")
                 new_weight = edge_info.get("weight")
                 
-                edge : Edge = self.agent.map.get_edge(node1_id, node2_id)
+                edge : Edge = self.map.get_edge(node1_id, node2_id)
                 if edge:
                     edge.weight = new_weight
     
