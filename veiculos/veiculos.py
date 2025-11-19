@@ -877,7 +877,6 @@ class Veiculo(Agent):
                 # Se não houver lista de veículos mas houver veículo único, usar o antigo formato
                 if not veiculos and veiculo:
                     veiculos = [veiculo]
->>>>>>>>> Temporary merge branch 2
                 
                 if self.agent.verbose:
                     print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
@@ -1245,7 +1244,6 @@ class Veiculo(Agent):
             """
 
             if not traffic_data:
-                print("erroco")
                 return
             
             # Atualizar pesos das arestas com base nos dados de trânsito

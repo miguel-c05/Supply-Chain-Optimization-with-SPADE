@@ -1383,7 +1383,9 @@ async def main():
     from veiculos.veiculos import Veiculo
     from veiculos.test_vehicle_agent import TestWarehouseAgent
     from world.world import World
-    
+    from supplier import Supplier
+    from store import Store
+    from warehouse import Warehouse
     # Configurações dos agentes
     EVENT_AGENT_JID = "event_agent@localhost"
     EVENT_AGENT_PASSWORD = "event123"
@@ -1391,6 +1393,10 @@ async def main():
     WORLD_AGENT_PASSWORD = "password"
     WAREHOUSE_JID = "warehouse_test@localhost"
     WAREHOUSE_PASSWORD = "warehouse123"
+    STORE_JID = "store_test@localhost"
+    STORE_PASSWORD = "store123"
+    SUPLIER_JID = "supplier_test@localhost"
+    SUPLIER_PASSWORD = "supplier123"
     VEHICLE_JID = "vehicle1@localhost"
     VEHICLE_PASSWORD = "vehicle123"
     VEHICLE_JID_2 = "vehicle2@localhost"
@@ -1410,9 +1416,9 @@ async def main():
         mode="different", 
         max_cost=4, 
         gas_stations=0, 
-        warehouses=5,
+        warehouses=1,
         suppliers=1, 
-        stores=4, 
+        stores=1, 
         highway=True,
         traffic_probability=0.5,
         traffic_spread_probability=0.8,
@@ -1433,6 +1439,16 @@ async def main():
         if hasattr(node, 'store') and node.store:
             store_locations.append(node_id)
     
+
+    warehouse_locations = []
+    for node_id, node in world.graph.nodes.items():
+        if hasattr(node, 'warehouse') and node.warehouse:
+            warehouse_locations.append(node_id)
+
+    suplier_locations = []
+    for node_id, node in world.graph.nodes.items():
+        if hasattr(node, 'supplier') and node.supplier:
+            suplier_locations.append(node_id)
     if not store_locations:
         print("❌ ERRO: Não foram encontrados stores para localização inicial do veículo!")
         return
@@ -1479,7 +1495,17 @@ async def main():
         current_location=initial_location1,
         event_agent_jid=EVENT_AGENT_JID
     )
-    
+    warehouse_1= Warehouse(
+        jid=WAREHOUSE_JID,
+        password=WAREHOUSE_PASSWORD,
+        graph=world.graph,
+        node_id=warehouse_locations[0]
+    )
+    store_1= Store(
+        jid=STORE_JID,
+        password=STORE_PASSWORD,
+        graph=world.graph,
+        node_id=store_locations[0])
     
     # Criar event agent com lista de veículos registrados e world agent
     print(f"\n⚙️ Criando Event Agent...")
@@ -1489,7 +1515,7 @@ async def main():
         simulation_interval=10.0,
         registered_vehicles=[VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3],
         registered_warehouses=[WAREHOUSE_JID],
-        registered_stores=[],
+        registered_stores=[STORE_JID],
         world_agent=WORLD_AGENT_JID,
         world_simulation_time=10.0,
         verbose=False
@@ -1499,7 +1525,7 @@ async def main():
     print(f"\n🌍 Criando World Agent...")
     from world_agent import WorldAgent
     world_agent = WorldAgent(WORLD_AGENT_JID, WORLD_AGENT_PASSWORD, world=world)
-    
+    '''
     # Criar warehouse de teste
     print(f"\n📦 Criando Warehouse de teste...")
     try:
@@ -1512,7 +1538,7 @@ async def main():
     except ValueError as e:
         print(f"\n❌ ERRO: {e}")
         print("Certifique-se de que o mundo tem warehouses e stores suficientes!")
-        return
+        return'''
     
     print("\n" + "="*70)
     print(f"Event Agent JID: {EVENT_AGENT_JID}")
