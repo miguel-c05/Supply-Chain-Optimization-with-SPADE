@@ -725,8 +725,10 @@ class Veiculo(Agent):
                         )
                         if not self.agent.next_node and self.agent.actual_route:
                             self.agent.next_node = self.agent.actual_route[1][0]
-                        print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
-                        print(f"Rota recalculada")
+                        
+                        if self.agent.verbose:
+                            print(f"[{self.agent.name}] Status alterado para AWAY - tem tarefas pendentes")
+                            print(f"[{self.agent.name}] Rota atual: {self.agent.actual_route}")
                     else:
                         print(f"[{self.agent.name}] Ordem {order.orderid} rejeitada pelo warehouse")
                     
