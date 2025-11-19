@@ -813,9 +813,6 @@ class EventDrivenAgent(Agent):
                             print(f"[{self.agent.name}] 📩 Evento de trânsito manual recebido: {event}")
                             print(f"   Eventos de trânsito: {len(self.agent.transit_events)}")
                     elif event_type == "arrival":
-                        # Adicionar eventos de arrival à lista apenas se time > 0
-                        if time > 0:
-                            # Marcar que recebeu o primeiro arrival
                             if not self.agent.first_arrival_received:
                                 self.agent.first_arrival_received = True
                                 if self.agent.verbose:
@@ -827,9 +824,6 @@ class EventDrivenAgent(Agent):
                             if self.agent.verbose:
                                 print(f"[{self.agent.name}] 📩 Evento ARRIVAL adicionado à lista: {event}")
                                 print(f"   Eventos de arrival: {len(self.agent.arrival_events)}")
-                        else:
-                            if self.agent.verbose:
-                                print(f"[{self.agent.name}] ⚠️  Evento ARRIVAL ignorado (time=0): {event}")
                     else:
                         # Adicionar à heap outros tipos de eventos
                         heapq.heappush(self.agent.event_heap, event)

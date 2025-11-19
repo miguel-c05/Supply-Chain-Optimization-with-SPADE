@@ -152,12 +152,13 @@ class Order:
         """
         #calcula o tempo de entrega baseado no mapa
         path, fuel, time = map.djikstra(int(sender_location), int(receiver_location))
-        _ , time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
         self.route = path
         self.deliver_time = time
         self.fuel = fuel
         self.sender_location = sender_location
         self.receiver_location = receiver_location
+        _ , time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
+        self.deliver_time = time
 
 class Veiculo(Agent):
     """
@@ -1161,7 +1162,7 @@ class Veiculo(Agent):
                 "vehicle_id": str(self.agent.jid),
                 "status": "completed",
                 "location": self.agent.current_location,
-                "time": order.time          
+                "time": order.deliver_time    
             }
             msg.body = json.dumps(data)
             await self.send(msg)
