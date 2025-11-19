@@ -373,7 +373,8 @@ class Veiculo(Agent):
                 required_fields = ["product", "quantity", "orderid", "sender", "receiver", 
                                     "sender_location", "receiver_location"]
                 if not all(field in order_data for field in required_fields):
-                    print(f"[{self.agent.name}] Mensagem inválida - campos faltando: {order_data}")
+                    if self.agent.verbose:
+                        print(f"[{self.agent.name}] Mensagem inválida - campos faltando: {order_data}")
                     return
                 
                 order = Order(
@@ -386,7 +387,8 @@ class Veiculo(Agent):
                 order.sender_location = order_data["sender_location"]
                 order.receiver_location = order_data["receiver_location"]
                 
-                print(f"[{self.agent.name}] Ordem recebida: {order}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Ordem recebida: {order}")
                 
                 # Calcular informações da ordem (rota, tempo, combustível)
                 order.time_to_deliver(
@@ -402,7 +404,7 @@ class Veiculo(Agent):
                 
                 # Verificar se consegue encaixar na rota atual
                 can_fit, delivery_time = await self.can_fit_in_current_route(order)
-                
+                order.deliver_time = delivery_time
 
                 proposal_msg= Message(to=order.sender)
                 proposal_msg.set_metadata("performative", "vehicle-proposal")
@@ -416,7 +418,11 @@ class Veiculo(Agent):
                 proposal_msg.body = json.dumps(proposal_data)
                 await self.send(proposal_msg)
                 
-                print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}, order route={order.route}")
+                
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender} - Ordem {order.orderid}: can_fit={can_fit}, tempo={delivery_time}, order route={order.route}")
+                else:
+                    print(f"[{self.agent.name}] Proposta enviada de volta para {msg.sender}") 
                     
                 # Guardar informações no dicionário de confirmações pendentes
                 self.agent.pending_confirmations[order.orderid] = {
@@ -738,7 +744,8 @@ class Veiculo(Agent):
                     
                     # Remover do dicionário de confirmações pendentes
                     del self.agent.pending_confirmations[orderid]
-                    print(f"[{self.agent.name}] Ordem {orderid} removida das confirmações pendentes. Restantes: {len(self.agent.pending_confirmations)}")
+                    if self.agent.verbose:
+                        print(f"[{self.agent.name}] Ordem {orderid} removida das confirmações pendentes. Restantes: {len(self.agent.pending_confirmations)}")
                     
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"[{self.agent.name}] Erro ao processar confirmação: {e}")
@@ -866,7 +873,8 @@ class Veiculo(Agent):
                 # Veículo disponível (sem tarefas) - não processa mensagens de movimento
             if msg:
                 # print a mensagem recebida
-                print(f"[{self.agent.name}] Mensagem recebida no MovementBehaviour")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Mensagem recebida no MovementBehaviour")
                 if self.agent.verbose:
                     print(f"  Body: {msg.body}")
                     print(f"  Metadata: {msg.metadata}")
@@ -878,7 +886,8 @@ class Veiculo(Agent):
                 
                 # Verificar se este veículo está na lista de veículos
                 is_for_this_vehicle = self.agent.name in veiculos
-                print (f"[{self.agent.name}] is_for_this_vehicle: {is_for_this_vehicle} (veiculos={veiculos})")
+                if self.agent.verbose:
+                    print (f"[{self.agent.name}] is_for_this_vehicle: {is_for_this_vehicle} (veiculos={veiculos})")
                 if type == "arrival" and is_for_this_vehicle:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
@@ -902,11 +911,12 @@ class Veiculo(Agent):
                                 show=PresenceShow.CHAT,
                                 status="Disponível para novas ordens"
                             )
-                            print(f"[{self.agent.name}] Todas as tarefas concluídas. Veículo agora disponível.")
-                            print(f"[{self.agent.name}] Presence atualizada para AVAILABLE {self.agent.presence.get_show()}.")
+                            
                             self.agent.next_node = None
                             if self.agent.verbose:
                                 print(f"[{self.agent.name}] Status alterado para AVAILABLE - sem tarefas")
+                                print(f"[{self.agent.name}] Todas as tarefas concluídas. Veículo agora disponível.")
+                                print(f"[{self.agent.name}] Presence atualizada para AVAILABLE {self.agent.presence.get_show()}.")
                             return 
                             
                             
@@ -937,8 +947,8 @@ class Veiculo(Agent):
                         print(f"[{self.agent.name}] localização atual antes de mover: {self.agent.current_location}")
                     temp_location = self.agent.current_location
                     self.agent.current_location = await self.update_location_and_time(time)
-                    
-                    print(f"[{self.agent.name}] localização atual após mover: {self.agent.current_location}")
+                    if self.agent.verbose:
+                        print(f"[{self.agent.name}] localização atual após mover: {self.agent.current_location}")
                     _, _, tempo_simulado = self.agent.map.djikstra(temp_location, self.agent.current_location)
                     if self.agent.verbose:
                         print(f"[{self.agent.name}] Tempo simulado para mover: {tempo_simulado}")
@@ -956,7 +966,8 @@ class Veiculo(Agent):
                 if time == 0 and type == "Transit":
                     should_notify = False
                     #print(f"[{self.agent.name}] ⚠️  Notificação ignorada (time=0 e tipo={type}, is_for_this_vehicle={is_for_this_vehicle})")
-                print(f"[{self.agent.name}] should_notify: {should_notify}, next_node: {self.agent.next_node}, route: {self.agent.actual_route}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] should_notify: {should_notify}, next_node: {self.agent.next_node}, route: {self.agent.actual_route}")
                 if should_notify and self.agent.next_node:
                     _, _, time_left = self.agent.map.djikstra(
                         self.agent.current_location,
@@ -1379,7 +1390,8 @@ class Veiculo(Agent):
             msg = await self.receive(timeout=1)
             
             if msg:
-                print(f"[{self.agent.name}] 📩 Pedido de presença recebido de {msg.sender}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] 📩 Pedido de presença recebido de {msg.sender}")
                 
                 # Obter informações de presença atuais
                 presence_type = self.agent.presence.get_presence().type
@@ -1406,7 +1418,8 @@ class Veiculo(Agent):
                 reply.body = json.dumps(response_data)
                 
                 await self.send(reply)
-                print(f"[{self.agent.name}] ✅ Resposta de presença enviada para {msg.sender}")
-                print(f"  Status: {presence_show}, Localização: {self.agent.current_location}, Ordens ativas: {len(self.agent.orders)}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] ✅ Resposta de presença enviada para {msg.sender}")
+                    print(f"  Status: {presence_show}, Localização: {self.agent.current_location}, Ordens ativas: {len(self.agent.orders)}")
 
                                      
