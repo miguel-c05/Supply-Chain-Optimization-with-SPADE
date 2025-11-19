@@ -96,7 +96,8 @@ async def main():
         map=graph,
         weight=1500,
         current_location=1,  # Start at node 1
-        event_agent_jid=None  # No event agent in this test
+        event_agent_jid=None,  # No event agent in this test
+        verbose=True
     )
     
     vehicle2 = Veiculo(
@@ -108,7 +109,8 @@ async def main():
         map=graph,
         weight=1500,
         current_location=20,  # Start at node 20
-        event_agent_jid=None  # No event agent in this test
+        event_agent_jid=None,  # No event agent in this test
+        verbose=True
     )
     
     # Start all agents
@@ -201,11 +203,13 @@ async def main():
     print("="*70)
     
     # Trigger store to buy 10 units of product A
-    buy_behav = store.BuyProduct(quantity=10, product="A")
+    buy_behav = store.BuyProduct()
     store.add_behaviour(buy_behav)
     print(f"\n📤 {store.jid} requesting 10 units of product A from all warehouses")
     
     # Wait for the buy behavior to complete
+    behav = store.BuyProduct()
+    behav.kill()
     await buy_behav.join()
     
     print("\n📊 After warehouse selection:")
@@ -366,6 +370,11 @@ async def main():
         print(f"  Orders: {len(selected_vehicle.orders)}")
         print(f"  Current location: {selected_vehicle.current_location}")
         print(f"  Current load: {selected_vehicle.current_load}/{selected_vehicle.capacity}")
+    
+    behav = store.BuyProduct()
+    behav.kill()
+    await behav.join()
+    
     
     # Stop all agents
     print("\n🛑 Stopping all agents...")

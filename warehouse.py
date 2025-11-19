@@ -383,7 +383,7 @@ class Warehouse(Agent):
             proposals = {}  # vehicle_jid : (can_fit, time)
             
             while True:
-                msg : Message = await self.receive(timeout=5)
+                msg : Message = await self.receive(timeout=10)
                 
                 if msg:
                     print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
@@ -793,6 +793,23 @@ class Warehouse(Agent):
     
     class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
+            agent : Store = self.agent
+            
+            msg : Message = await self.receive(timeout=20)
+            
+            if msg != None:
+                data = json.loads(msg.body)
+                
+                type : str = data["type"]
+                delta : int = data["time"]
+                agent.current_tick += delta
+                
+                if type.lower() != "arrival":
+                    map_updates = data["data"]                   
+                
+                # TODO -- implement update graph  
+                agent.update_graph(map_updates)
+        async def run(self):
             agent : Warehouse = self.agent
             
             msg : Message = await self.receive(timeout=20)
@@ -905,10 +922,10 @@ class Warehouse(Agent):
         self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
         
         # Initialize critical attributes early to avoid AttributeError
-        self.pending_orders = {}
+        self.pending_orders : dict[int, Order] = {} # order_id as key and Order object as value
         self.vehicles = []
         self.suppliers = []
-        self.request_counter = 0
+        self.request_counter : int = 0
     
     async def setup(self):
         self.presence.approve_all = True
@@ -929,10 +946,8 @@ class Warehouse(Agent):
         self.locked_stock = {}
         self.print_stock()
         
-        # Dict with order_id as key and Order object as value
-        self.pending_orders : dict[int, Order] = {}
+        
         self.presence_infos : dict[str, str] = {}
-        self.request_counter : int = 0
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()
         
