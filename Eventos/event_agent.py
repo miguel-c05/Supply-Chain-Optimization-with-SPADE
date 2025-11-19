@@ -1,20 +1,57 @@
-"""
-Este módulo implementa um sistema de gestão de eventos baseado em prioridades temporais,
-utilizando uma estrutura de min heap para ordenar e processar eventos de forma eficiente.
-O agente é responsável por receber, armazenar e distribuir eventos relacionados com
-a simulação de uma cadeia de abastecimento, incluindo eventos de chegada de veículos,
-alterações de tráfego e outras ocorrências temporais.
+"""Event-driven agent system for supply chain simulation.
+
+This module implements an event management system based on temporal priorities,
+using a min heap data structure to efficiently order and process events.
+The agent is responsible for receiving, storing, and distributing events related to
+supply chain simulation, including vehicle arrival events, traffic changes, and other
+temporal occurrences.
+
+The system follows FIPA (Foundation for Intelligent Physical Agents) standards for
+agent communication, utilizing XMPP as the transport protocol and ACL (Agent Communication
+Language) performatives for message semantics.
 
 Classes:
-    Event: Representa um evento individual com tipo, tempo e dados associados.
-    EventDrivenAgent: Agente SPADE que gere a heap de eventos e processa periodicamente.
+    Event: Represents an individual event with type, time, and associated data.
+    EventDrivenAgent: SPADE agent that manages the event heap and processes periodically.
 
-Dependências:
-    - asyncio: Operações assíncronas
-    - heapq: Estrutura de dados heap para ordenação eficiente
-    - json: Serialização de mensagens
-    - typing: Anotações de tipo
-    - spade: Framework de agentes multi-agente
+FIPA Compliance:
+    - Uses FIPA ACL performatives (inform, request) in message metadata
+    - Follows FIPA interaction protocols for agent communication
+    - Implements presence-based subscription model for agent discovery
+    - Uses XMPP (Extensible Messaging and Presence Protocol) as transport layer
+
+Dependencies:
+    - asyncio: Asynchronous I/O operations
+    - heapq: Heap data structure for efficient ordering
+    - json: Message serialization
+    - typing: Type annotations
+    - spade: Multi-agent system framework
+
+Examples:
+    >>> # Create and start an event-driven agent
+    >>> event_agent = EventDrivenAgent(
+    ...     jid="event_agent@localhost",
+    ...     password="password",
+    ...     simulation_interval=5.0,
+    ...     registered_vehicles=["vehicle1@localhost"],
+    ...     registered_warehouses=["warehouse1@localhost"],
+    ...     registered_stores=["store1@localhost"],
+    ...     registered_suppliers=["supplier1@localhost"],
+    ...     world_agent="world@localhost",
+    ...     world_simulation_time=10.0,
+    ...     verbose=True
+    ... )
+    >>> await event_agent.start()
+
+Note:
+    This module requires a running XMPP server (e.g., Openfire, Prosody, ejabberd)
+    and properly registered agent accounts for communication.
+
+Version:
+    1.0.0
+
+Author:
+    Supply Chain Optimization Team
 """
 
 import asyncio
@@ -29,27 +66,36 @@ from spade.presence import PresenceType, PresenceShow
 
 
 class Event:
-    """
-    Representa um evento temporal na simulação.
+    """Temporal event representation for supply chain simulation.
     
-    Esta classe encapsula informações sobre eventos que ocorrem em momentos específicos
-    durante a simulação. Os eventos são comparáveis e ordenáveis por tempo, permitindo
-    a sua utilização numa estrutura de min heap para processamento por ordem cronológica.
+    This class encapsulates information about events that occur at specific moments
+    during the simulation. Events are comparable and orderable by time, allowing
+    their use in a min heap structure for chronological processing.
     
-    Os eventos podem representar diferentes tipos de ocorrências:
-        - "arrival": Chegada de um veículo a um nó (armazém, loja, posto de combustível)
-        - "transit": Alteração nas condições de trânsito numa aresta do grafo
-        - "updatesimulation": Pedido de actualização da simulação de tráfego
-        - Outros tipos personalizados conforme necessário
+    The event system supports various event types representing different occurrences
+    in the supply chain:
+        - **arrival**: Vehicle arrival at a node (warehouse, store, gas station)
+        - **transit**: Traffic condition changes on a graph edge
+        - **updatesimulation**: Request for traffic simulation update
+        - Custom types as needed by the simulation
+    
+    Comparison operations are based solely on the `time` attribute, implementing
+    a total ordering for heap-based priority queue operations.
     
     Attributes:
-        event_type (str): Tipo do evento (e.g., "arrival", "transit", "updatesimulation").
-        time (float): Momento temporal em que o evento ocorre, em segundos de simulação.
-        data (Dict[str, Any]): Dicionário contendo dados específicos do evento.
-        sender (str, optional): Identificador JID do agente que enviou o evento.
+        event_type (str): Type of event (e.g., "arrival", "transit", "updatesimulation").
+            Defines the processing behavior and data structure expected.
+        time (float): Event occurrence time in simulation seconds. Used for
+            heap ordering - lower values have higher priority.
+        data (Dict[str, Any]): Event-specific data dictionary. Structure varies by type:
+            - arrival: {"location": str, "vehicle": str}
+            - transit: {"edges": List[Dict], "node1": int, "node2": int, "weight": float}
+            - updatesimulation: {"action": str}
+        sender (str, optional): Full JID of the sending agent (format: "name@server").
+            None for internal or system-generated events.
 
     Examples:
-        >>> # Criar evento de chegada de veículo
+        >>> # Create vehicle arrival event
         >>> arrival_event = Event(
         ...     event_type="arrival",
         ...     time=15.5,
@@ -57,7 +103,7 @@ class Event:
         ...     sender="vehicle1@localhost"
         ... )
         >>> 
-        >>> # Criar evento de alteração de trânsito
+        >>> # Create traffic change event
         >>> transit_event = Event(
         ...     event_type="transit",
         ...     time=20.0,
@@ -71,154 +117,258 @@ class Event:
         ...     }
         ... )
         >>> 
-        >>> # Comparar eventos por tempo
+        >>> # Compare events by time
         >>> arrival_event < transit_event
         True
+        >>> 
+        >>> # Use in heap
+        >>> import heapq
+        >>> heap = []
+        >>> heapq.heappush(heap, transit_event)
+        >>> heapq.heappush(heap, arrival_event)
+        >>> next_event = heapq.heappop(heap)  # Returns arrival_event (earlier time)
     
     Note:
-        A comparação entre eventos é realizada exclusivamente com base no atributo `time`.
-        Eventos com o mesmo tempo são considerados iguais para efeitos de ordenação,
-        mas podem ter tipos e dados diferentes.
+        Event comparison is performed exclusively based on the `time` attribute.
+        Events with the same time are considered equal for ordering purposes,
+        but may have different types and data content.
+        
+        This design follows the principle of temporal consistency in discrete
+        event simulation systems.
     """
     
     def __init__(self, event_type: str, time: float, data: Dict[str, Any], 
                  sender: str = None):
-        """
-        Inicializa um novo evento.
+        """Initialize a new event instance.
+        
+        Creates an event object with specified type, temporal occurrence, associated data,
+        and optional sender identification. This constructor performs no validation,
+        relying on the caller to provide semantically correct values.
         
         Args:
-            event_type (str): Tipo do evento. Valores comuns incluem "arrival", "transit",
-                "updatesimulation". Define o comportamento de processamento do evento.
-            time (float): Tempo do evento em segundos de simulação. Utilizado para
-                ordenação na min heap. Valores menores têm prioridade.
-            data (Dict[str, Any]): Dicionário com dados específicos do evento. A estrutura
-                varia conforme o tipo de evento:
-                - arrival: {"location": str, "vehicle": str}
-                - transit: {"edges": List[Dict], "node1": int, "node2": int, "weight": float}
-                - updatesimulation: {"action": str}
-            sender (str, optional): JID completo do agente remetente (formato: "nome@servidor").
-                Se None, o evento é interno ou gerado pelo sistema.
+            event_type (str): Event type identifier. Common values include "arrival",
+                "transit", "updatesimulation". Determines event processing behavior
+                and expected data structure.
+            time (float): Event occurrence time in simulation seconds. Used for
+                heap ordering - lower values indicate higher priority and earlier
+                processing. Must be non-negative.
+            data (Dict[str, Any]): Event-specific data dictionary. Structure varies
+                by event type:
+                - **arrival**: {"location": str, "vehicle": str} - Location and vehicle ID
+                - **transit**: {"edges": List[Dict], "node1": int, "node2": int, 
+                  "weight": float, "fuel_consumption": float} - Graph edge updates
+                - **updatesimulation**: {"action": str, "requester": str} - Simulation requests
+            sender (str, optional): Full JID of sending agent in format "name@server".
+                None indicates internal/system-generated event. Defaults to None.
         
         Examples:
+            >>> # Simple arrival event
             >>> event = Event("arrival", 10.5, {"vehicle": "v1"}, "vehicle1@localhost")
             >>> event.time
             10.5
             >>> event.event_type
             'arrival'
-        """
-        self.event_type = event_type  # "arrival", "transit", etc.
-        self.time = time  # Tempo do evento
-        self.data = data  # Dados do evento
-        self.sender = sender  # Quem enviou o evento
-    
-    def __lt__(self, other):
-        """
-        Operador de comparação menor que (<) para ordenação na min heap.
-        
-        Args:
-            other (Event): Outro evento para comparação.
-        
-        Returns:
-            bool: True se este evento tem tempo menor (maior prioridade), False caso contrário.
+            >>> 
+            >>> # Transit event without sender (system-generated)
+            >>> transit = Event("transit", 5.0, {"edges": [...]})
+            >>> transit.sender is None
+            True
         
         Note:
-            Este método é essencial para o funcionamento correcto do heapq.
-            Eventos com menor tempo são processados primeiro (min heap).
+            The constructor does not validate event_type values or data structure.
+            Validation should be performed by event processors based on type.
+        """
+        self.event_type = event_type  # Event type: "arrival", "transit", etc.
+        self.time = time  # Event occurrence time
+        self.data = data  # Event-specific data payload
+        self.sender = sender  # Originating agent JID
+    
+    def __lt__(self, other):
+        """Less-than comparison operator for min heap ordering.
+        
+        Implements the less-than comparison required by Python's heapq module
+        for maintaining min heap invariant. Events with earlier times have
+        higher priority and are processed first.
+        
+        Args:
+            other (Event): Another event instance for comparison.
+        
+        Returns:
+            bool: True if this event has earlier time (higher priority),
+                False otherwise.
+        
+        Examples:
+            >>> early = Event("arrival", 5.0, {})
+            >>> late = Event("transit", 10.0, {})
+            >>> early < late
+            True
+            >>> late < early
+            False
+        
+        Note:
+            This method is essential for heapq module functionality.
+            Events with lower time values are processed first (min heap property).
+            Only the time attribute is compared; other attributes are ignored.
         """
         return self.time < other.time
     
     def __le__(self, other):
-        """
-        Operador menor ou igual (<=).
+        """Less-than-or-equal comparison operator.
+        
+        Compares events based on their temporal occurrence, supporting
+        sorting and filtering operations.
         
         Args:
-            other (Event): Outro evento para comparação.
+            other (Event): Another event instance for comparison.
         
         Returns:
-            bool: True se este evento tem tempo menor ou igual ao outro.
+            bool: True if this event occurs at or before the other event.
+        
+        Examples:
+            >>> e1 = Event("arrival", 5.0, {})
+            >>> e2 = Event("transit", 5.0, {})
+            >>> e1 <= e2
+            True
         """
         return self.time <= other.time
     
     def __gt__(self, other):
-        """
-        Operador maior que (>).
+        """Greater-than comparison operator.
+        
+        Compares events based on temporal occurrence for reverse ordering
+        and filtering operations.
         
         Args:
-            other (Event): Outro evento para comparação.
+            other (Event): Another event instance for comparison.
         
         Returns:
-            bool: True se este evento tem tempo maior que o outro.
+            bool: True if this event occurs after the other event.
+        
+        Examples:
+            >>> late = Event("arrival", 10.0, {})
+            >>> early = Event("transit", 5.0, {})
+            >>> late > early
+            True
         """
         return self.time > other.time
     
     def __ge__(self, other):
-        """
-        Operador maior ou igual (>=).
+        """Greater-than-or-equal comparison operator.
+        
+        Compares events based on temporal occurrence, supporting
+        sorting and filtering in descending order.
         
         Args:
-            other (Event): Outro evento para comparação.
+            other (Event): Another event instance for comparison.
         
         Returns:
-            bool: True se este evento tem tempo maior ou igual ao outro.
+            bool: True if this event occurs at or after the other event.
+        
+        Examples:
+            >>> e1 = Event("arrival", 5.0, {})
+            >>> e2 = Event("transit", 5.0, {})
+            >>> e1 >= e2
+            True
         """
         return self.time >= other.time
     
     def __eq__(self, other):
-        """
-        Operador de igualdade (==).
+        """Equality comparison operator.
+        
+        Determines if two events occur at the same simulation time.
+        Note that events are considered equal for ordering purposes even
+        if they have different types or data content.
         
         Args:
-            other (Event): Outro evento para comparação.
+            other (Event): Another event instance for comparison.
         
         Returns:
-            bool: True se os eventos têm o mesmo tempo.
+            bool: True if events have identical occurrence time.
+        
+        Examples:
+            >>> e1 = Event("arrival", 5.0, {"a": 1})
+            >>> e2 = Event("transit", 5.0, {"b": 2})
+            >>> e1 == e2
+            True
         
         Note:
-            Apenas o tempo é comparado. Eventos com mesmo tempo mas tipos
-            diferentes são considerados iguais para ordenação.
+            Only the time attribute is compared. Events with same time but
+            different types are considered equal for ordering purposes.
+            This design enables simultaneous processing of concurrent events.
         """
         return self.time == other.time
     
     def __repr__(self):
-        """
-        Representação textual do evento para debugging.
+        """Return string representation of event for debugging.
+        
+        Provides a human-readable representation including event type,
+        occurrence time, and sender information. Useful for logging,
+        debugging, and interactive inspection.
         
         Returns:
-            str: String formatada com informações principais do evento.
+            str: Formatted string with key event information in format:
+                "Event(type=<type>, time=<time>, sender=<sender>)"
+                Time is formatted to 2 decimal places.
         
         Examples:
             >>> event = Event("arrival", 15.5, {}, "vehicle1@localhost")
             >>> repr(event)
             'Event(type=arrival, time=15.50, sender=vehicle1@localhost)'
+            >>> 
+            >>> print(event)
+            Event(type=arrival, time=15.50, sender=vehicle1@localhost)
+        
+        Note:
+            The data attribute is not included in the representation to
+            keep output concise. Use event.data for full details.
         """
         return f"Event(type={self.event_type}, time={self.time:.2f}, sender={self.sender})"
     
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Converte o evento para formato de dicionário para transmissão via mensagens.
+        """Convert event to dictionary format for XMPP message transmission.
         
-        Este método serializa o evento num formato adequado para envio através
-        do sistema de mensagens SPADE. A estrutura do dicionário varia conforme
-        o tipo de evento para optimizar a transmissão de dados.
+        Serializes the event into a format suitable for sending through the SPADE
+        messaging system. The dictionary structure varies by event type to optimize
+        data transmission and maintain FIPA ACL compliance.
+        
+        This method follows FIPA principles by creating a structured content format
+        that can be embedded in FIPA ACL message bodies.
         
         Returns:
-            Dict[str, Any]: Dicionário com campos apropriados ao tipo de evento:
-                - arrival: {"type": str, "time": float, "vehicle": str}
-                - transit: {"type": str, "time": float, "data": Dict}
-                - outros: {"type": str, "time": float, "data": Dict}
+            Dict[str, Any]: Dictionary with fields appropriate to event type:
+                - **arrival**: {"type": str, "time": float, "vehicle": str}
+                  Vehicle name extracted from sender JID (before '@').
+                - **transit**: {"type": str, "time": float, "data": Dict}
+                  Complete data payload including edge updates.
+                - **other types**: {"type": str, "time": float, "data": Dict}
+                  Generic structure with full data content.
         
         Examples:
+            >>> # Arrival event serialization
             >>> arrival_event = Event("arrival", 10.5, {}, "vehicle1@localhost")
             >>> arrival_event.to_dict()
             {'type': 'arrival', 'time': 10.5, 'vehicle': 'vehicle1'}
             >>>
+            >>> # Transit event serialization
             >>> transit_event = Event("transit", 5.0, {"edges": [...]})
             >>> transit_event.to_dict()
             {'type': 'transit', 'time': 5.0, 'data': {'edges': [...]}}
+            >>>
+            >>> # Custom event serialization
+            >>> custom_event = Event("custom", 3.0, {"key": "value"})
+            >>> custom_event.to_dict()
+            {'type': 'custom', 'time': 3.0, 'data': {'key': 'value'}}
         
         Note:
-            Para eventos de arrival, o nome do veículo é extraído do JID do sender
-            (parte antes do '@'). Para eventos de trânsito, todos os dados são incluídos.
+            For arrival events, the vehicle name is extracted from the sender JID
+            (portion before '@'). For transit events, all data is included.
+            This serialization format is designed for JSON encoding and XMPP
+            message transmission.
+        
+        FIPA Compliance:
+            The returned dictionary serves as the content of FIPA ACL messages,
+            providing structured semantic information that agents can interpret
+            according to the event type.
         """
         if self.event_type == "arrival":
             return {
@@ -241,113 +391,141 @@ class Event:
 
 
 class EventDrivenAgent(Agent):
-    """
-    Agente orientado a eventos que gere uma simulação temporal baseada em heap.
+    """Event-driven agent managing temporal simulation with heap-based priority queue.
     
-    Este agente é o núcleo do sistema de gestão de eventos da simulação de cadeia
-    de abastecimento. Utiliza uma estrutura de min heap para manter eventos ordenados
-    por tempo e processa-os periodicamente em intervalos configuráveis. O agente
-    coordena comunicações entre veículos, armazéns, lojas e o agente do mundo,
-    garantindo que todos os participantes recebam notificações de eventos relevantes.
+    This agent serves as the core of the event management system for supply chain simulation.
+    It uses a min heap data structure to maintain events ordered by time and processes them
+    periodically at configurable intervals. The agent coordinates communications between
+    vehicles, warehouses, stores, suppliers, and the world agent, ensuring all participants
+    receive relevant event notifications.
     
-    Arquitetura:
-        - **Min Heap**: Armazena eventos gerais ordenados por tempo
-        - **Transit Events**: Lista separada para eventos de alteração de tráfego
-        - **Arrival Events**: Lista temporária para chegadas de veículos
-        - **Behaviours**: Conjuntos de comportamentos assíncronos que executam
-          diferentes funcionalidades (recepção, processamento, notificação)
+    The agent implements FIPA (Foundation for Intelligent Physical Agents) standards for
+    multi-agent communication, using XMPP as transport protocol and ACL performatives
+    for semantic message exchange.
     
-    Fluxo de Trabalho:
-        1. **Inicialização**: Subscreve todos os agentes registados e envia sinal inicial
-        2. **Recepção Contínua**: Behaviour cíclico recebe eventos de todos os agentes
-        3. **Processamento Periódico**: A cada intervalo, processa eventos da heap
-        4. **Notificação**: Distribui eventos processados aos agentes apropriados
-        5. **Resimulação**: Solicita nova simulação de tráfego quando necessário
+    Architecture:
+        - **Min Heap**: Stores general events ordered by time (O(log n) operations)
+        - **Transit Events List**: Separate list for traffic change events with temporal decay
+        - **Arrival Events Buffer**: Temporary buffer for vehicle arrival grouping
+        - **Behaviours**: Set of asynchronous behaviours executing different functionalities:
+            * ReceiveEventsBehaviour: Continuous message reception (CyclicBehaviour)
+            * ProcessEventsBehaviour: Periodic event processing (PeriodicBehaviour)
+            * SendInitialSignalBehaviour: Initial system activation (PeriodicBehaviour)
+            * RegisterTransitBehaviour: Initial traffic simulation request (OneShotBehaviour)
+    
+    Workflow:
+        1. **Initialization**: Subscribe all registered agents and send initial signal
+        2. **Continuous Reception**: Cyclic behaviour receives events from all agents
+        3. **Periodic Processing**: At each interval, process events from heap
+        4. **Notification**: Distribute processed events to appropriate agents
+        5. **Resimulation**: Request new traffic simulation when needed
     
     Attributes:
-        event_heap (List[Event]): Min heap de eventos gerais ordenados por tempo.
-        transit_events (List[Event]): Lista de eventos de trânsito activos.
-        arrival_events (List[Event]): Buffer temporário para eventos de chegada.
-        simulation_interval (float): Intervalo em segundos entre processamentos.
-        registered_vehicles (List[str]): JIDs dos veículos registados no sistema.
-        registered_warehouses (List[str]): JIDs dos armazéns registados.
-        registered_stores (List[str]): JIDs das lojas registadas.
-        world_agent (str): JID do agente do mundo para simulação de tráfego.
-        world_simulation_time (float): Duração em segundos da simulação de tráfego.
-        event_count (int): Contador total de eventos recebidos.
-        processed_count (int): Contador total de eventos processados.
-        last_simulation_time (float): Timestamp da última simulação processada.
-        time_simulated (float): Tempo total de simulação acumulado.
-        verbose (bool): Flag para activar logs detalhados.
+        event_heap (List[Event]): Min heap of general events ordered by time.
+        transit_events (List[Event]): Separate list for active traffic events with time decay.
+        arrival_events (List[Event]): Temporary buffer for vehicle arrival events.
+        simulation_interval (float): Interval in seconds between processing cycles.
+        registered_vehicles (List[str]): JIDs of vehicles registered in the system.
+        registered_warehouses (List[str]): JIDs of registered warehouses.
+        registered_stores (List[str]): JIDs of registered stores.
+        registered_suppliers (List[str]): JIDs of registered suppliers.
+        world_agent (str): JID of the world agent for traffic simulation.
+        world_simulation_time (float): Duration in seconds of each traffic simulation.
+        event_count (int): Total counter of events received.
+        processed_count (int): Total counter of events processed.
+        last_simulation_time (float): Timestamp of last processed simulation.
+        time_simulated (float): Total accumulated simulation time.
+        verbose (bool): Flag to enable detailed logging.
+        first_arrival_received (bool): Flag indicating if first arrival has been received.
+        initial_signal_behaviour (PeriodicBehaviour): Reference to initial signal behaviour.
     
     Behaviours:
-        SendInitialSignalBehaviour: Envia sinal inicial aos veículos (OneShotBehaviour).
-        RegisterTransitBehaviour: Solicita simulação inicial de tráfego (OneShotBehaviour).
-        ReceiveEventsBehaviour: Recebe eventos continuamente (CyclicBehaviour).
-        ProcessEventsBehaviour: Processa eventos periodicamente (PeriodicBehaviour).
+        SendInitialSignalBehaviour: Sends initial signal to vehicles (PeriodicBehaviour).
+        RegisterTransitBehaviour: Requests initial traffic simulation (OneShotBehaviour).
+        ReceiveEventsBehaviour: Receives events continuously (CyclicBehaviour).
+        ProcessEventsBehaviour: Processes events periodically (PeriodicBehaviour).
     
     Examples:
-        >>> # Criar agente de eventos com configuração básica
+        >>> # Create event agent with basic configuration
         >>> event_agent = EventDrivenAgent(
         ...     jid="event_agent@localhost",
-        ...     password="senha123",
+        ...     password="password123",
         ...     simulation_interval=5.0,
         ...     registered_vehicles=["vehicle1@localhost", "vehicle2@localhost"],
         ...     registered_warehouses=["warehouse1@localhost"],
         ...     registered_stores=["store1@localhost"],
+        ...     registered_suppliers=["supplier1@localhost"],
         ...     world_agent="world@localhost",
         ...     world_simulation_time=10.0,
         ...     verbose=True
         ... )
         >>> 
-        >>> # Iniciar o agente
+        >>> # Start the agent
         >>> await event_agent.start()
         >>> 
-        >>> # O agente irá:
-        >>> # 1. Subscrever todos os agentes registados
-        >>> # 2. Enviar sinal inicial aos veículos
-        >>> # 3. Solicitar simulação de tráfego ao world agent
-        >>> # 4. Receber e processar eventos continuamente
+        >>> # The agent will:
+        >>> # 1. Subscribe all registered agents
+        >>> # 2. Send initial signal to vehicles
+        >>> # 3. Request traffic simulation from world agent
+        >>> # 4. Receive and process events continuously
     
     Note:
-        O agente utiliza uma estratégia de processamento híbrida:
-        - Eventos de trânsito são mantidos separados e têm o seu tempo decrementado
-        - Eventos de arrival são agrupados antes do processamento
-        - Eventos gerais são processados por ordem temporal estrita
+        The agent uses a hybrid processing strategy:
+        - Transit events are kept separate with time decremented each cycle
+        - Arrival events are grouped before processing for efficiency
+        - General events are processed in strict temporal order
         
-        Apenas eventos com o mesmo tempo do primeiro evento na heap são processados
-        em cada ciclo, garantindo sincronização temporal correcta.
+        Only events with the same time as the first event in heap are processed
+        in each cycle, ensuring correct temporal synchronization.
+    
+    FIPA Compliance:
+        - Uses FIPA ACL performatives in message metadata ("inform", "request")
+        - Follows FIPA interaction protocols for agent coordination
+        - Implements presence-based subscription for agent discovery (XMPP)
+        - Content is encoded as JSON for interoperability
+        - Sender and receiver identification through JIDs (Jabber IDs)
     
     Warning:
-        O agente requer que o servidor XMPP esteja a funcionar antes da inicialização.
-        Todos os JIDs registados devem existir e estar acessíveis para comunicação.
+        The agent requires a running XMPP server before initialization.
+        All registered JIDs must exist and be accessible for communication.
     
     """
     
     def __init__(self, jid: str, password: str, simulation_interval: float, registered_vehicles: List[str],
                  registered_warehouses: List[str], registered_stores: List[str] ,registered_suppliers: List[str],
                  world_agent: str, world_simulation_time: float, verbose: bool):
-        """
-        Inicializa o EventDrivenAgent com configurações de simulação e agentes registados.
+        """Initialize EventDrivenAgent with simulation settings and registered agents.
+        
+        Creates an event-driven agent instance configured for supply chain simulation
+        with specified processing interval and registered agent participants. This
+        constructor initializes all data structures but does not start behaviours or
+        subscribe agents - those actions occur in the setup() method.
         
         Args:
-            jid (str): Jabber ID completo do agente (formato: "nome@servidor").
-            password (str): Palavra-passe para autenticação no servidor XMPP.
-            simulation_interval (float): Intervalo em segundos entre ciclos de processamento
-                de eventos. Valores típicos: 1.0 a 10.0 segundos.
-            registered_vehicles (List[str]): Lista de JIDs dos veículos que participam
-                na simulação. Estes agentes receberão notificações de eventos relevantes.
-            registered_warehouses (List[str]): Lista de JIDs dos armazéns registados.
-            registered_stores (List[str]): Lista de JIDs das lojas registadas.
-            world_agent (str): JID do agente do mundo responsável pela simulação de tráfego.
-                Se None, funcionalidades de tráfego são desactivadas.
-            world_simulation_time (float): Duração em segundos de cada simulação de tráfego
-                solicitada ao world agent. Determina o horizonte temporal de previsão.
-            verbose (bool): Se True, activa logs detalhados para debugging e monitorização.
-                Se False, apenas mensagens essenciais são exibidas.
+            jid (str): Complete Jabber ID of the agent (format: "name@server").
+                Must be registered on the XMPP server before use.
+            password (str): Password for XMPP server authentication.
+            simulation_interval (float): Interval in seconds between event processing
+                cycles. Typical values: 1.0 to 10.0 seconds. Determines temporal
+                granularity of the simulation.
+            registered_vehicles (List[str]): List of vehicle JIDs participating in
+                simulation. These agents will receive event notifications and
+                traffic updates.
+            registered_warehouses (List[str]): List of registered warehouse JIDs.
+                Warehouses receive transit events for route optimization.
+            registered_stores (List[str]): List of registered store JIDs.
+                Stores receive traffic updates for delivery planning.
+            registered_suppliers (List[str]): List of registered supplier JIDs.
+                Suppliers receive event notifications for supply coordination.
+            world_agent (str): JID of the world agent responsible for traffic simulation.
+                If None, traffic simulation features are disabled.
+            world_simulation_time (float): Duration in seconds of each traffic simulation
+                requested from world agent. Determines temporal forecasting horizon.
+            verbose (bool): If True, enable detailed logs for debugging and monitoring.
+                If False, only essential messages are displayed.
         
         Examples:
-            >>> # Configuração para simulação pequena com 2 veículos
+            >>> # Small simulation configuration with 2 vehicles
             >>> agent = EventDrivenAgent(
             ...     jid="events@localhost",
             ...     password="pass123",
@@ -355,12 +533,13 @@ class EventDrivenAgent(Agent):
             ...     registered_vehicles=["v1@localhost", "v2@localhost"],
             ...     registered_warehouses=["w1@localhost"],
             ...     registered_stores=["s1@localhost", "s2@localhost"],
+            ...     registered_suppliers=["sup1@localhost"],
             ...     world_agent="world@localhost",
             ...     world_simulation_time=15.0,
             ...     verbose=False
             ... )
             >>> 
-            >>> # Configuração para simulação grande com logging detalhado
+            >>> # Large simulation configuration with detailed logging
             >>> agent_verbose = EventDrivenAgent(
             ...     jid="events@localhost",
             ...     password="pass123",
@@ -368,69 +547,76 @@ class EventDrivenAgent(Agent):
             ...     registered_vehicles=[f"vehicle{i}@localhost" for i in range(10)],
             ...     registered_warehouses=[f"warehouse{i}@localhost" for i in range(5)],
             ...     registered_stores=[f"store{i}@localhost" for i in range(20)],
+            ...     registered_suppliers=[f"supplier{i}@localhost" for i in range(3)],
             ...     world_agent="world@localhost",
             ...     world_simulation_time=30.0,
             ...     verbose=True
             ... )
         
         Note:
-            O construtor apenas inicializa as estruturas de dados. A subscrição aos
-            agentes e início dos behaviours ocorre no método setup().
+            The constructor only initializes data structures. Agent subscription
+            and behaviour initialization occur in the setup() method, which is
+            called automatically by SPADE framework when start() is invoked.
         """
         super().__init__(jid, password)
-        self.event_heap = []  # Min heap de eventos (não-trânsito)
-        self.transit_events = []  # Lista separada para eventos de trânsito
-        self.arrival_events = []  # Lista separada para eventos de arrival
-        self.simulation_interval = simulation_interval  # Intervalo de simulação (5s)
-        self.registered_vehicles = registered_vehicles  # Veículos registrados
-        self.registered_warehouses = registered_warehouses  # Warehouses registrados
-        self.registered_stores = registered_stores  # Stores registrados
-        self.registered_suppliers = registered_suppliers  # Suppliers registrados
-        self.world_agent = world_agent  # Agente do mundo
-        self.world_simulation_time = world_simulation_time  # Tempo de simulação do mundo
-        self.event_count = 0  # Contador de eventos recebidos
-        self.processed_count = 0  # Contador de eventos processados
-        self.last_simulation_time = 0.0  # Tempo da última simulação
-        self.time_simulated = 0.0  # Tempo total simulado
-        self.verbose = verbose  # Modo verboso
-        self.first_arrival_received = False  # Flag para indicar se já recebeu o primeiro arrival
-        self.initial_signal_behaviour = None  # Referência para o behaviour de sinal inicial
+        self.event_heap = []  # Min heap of events (non-transit)
+        self.transit_events = []  # Separate list for transit events
+        self.arrival_events = []  # Separate list for arrival events
+        self.simulation_interval = simulation_interval  # Simulation interval (e.g., 5s)
+        self.registered_vehicles = registered_vehicles  # Registered vehicles
+        self.registered_warehouses = registered_warehouses  # Registered warehouses
+        self.registered_stores = registered_stores  # Registered stores
+        self.registered_suppliers = registered_suppliers  # Registered suppliers
+        self.world_agent = world_agent  # World agent JID
+        self.world_simulation_time = world_simulation_time  # World simulation duration
+        self.event_count = 0  # Counter of events received
+        self.processed_count = 0  # Counter of events processed
+        self.last_simulation_time = 0.0  # Last simulation timestamp
+        self.time_simulated = 0.0  # Total simulated time
+        self.verbose = verbose  # Verbose mode flag
+        self.first_arrival_received = False  # Flag for first arrival received
+        self.initial_signal_behaviour = None  # Reference to initial signal behaviour
     async def setup(self):
-        """
-        Configura e inicializa todos os behaviours e subscrições do agente.
+        """Configure and initialize all behaviours and agent subscriptions.
         
-        Este método é chamado automaticamente pelo framework SPADE quando o agente
-        é iniciado. Configura a presença XMPP, subscreve todos os agentes registados,
-        e adiciona os behaviours necessários para o funcionamento do sistema.
+        This method is called automatically by the SPADE framework when the agent
+        is started. It configures XMPP presence, subscribes all registered agents,
+        and adds the necessary behaviours for system operation.
         
-        Sequência de Inicialização:
-            1. Define presença como disponível (AVAILABLE/CHAT)
-            2. Aprova automaticamente todos os pedidos de subscrição
-            3. Subscreve veículos, armazéns, lojas e world agent
-            4. Adiciona SendInitialSignalBehaviour (executa uma vez)
-            5. Adiciona RegisterTransitBehaviour (solicita simulação inicial)
-            6. Adiciona ReceiveEventsBehaviour (recepção contínua)
-            7. Adiciona ProcessEventsBehaviour (processamento periódico)
+        Initialization Sequence:
+            1. Set presence as available (AVAILABLE/CHAT) following XMPP protocol
+            2. Automatically approve all subscription requests (trust model)
+            3. Subscribe vehicles, warehouses, stores, suppliers, and world agent
+            4. Add ReceiveEventsBehaviour for continuous message reception
+            5. Add SendInitialSignalBehaviour (periodic until first arrival)
+            6. Add RegisterTransitBehaviour to request initial traffic simulation
+            7. Add ProcessEventsBehaviour for periodic event processing
+        
+        FIPA Compliance:
+            Uses XMPP presence mechanism for agent discovery and availability,
+            which aligns with FIPA's agent management specifications.
         
         Raises:
-            SPADEException: Se houver problemas na conexão XMPP ou subscrição.
+            SPADEException: If there are problems with XMPP connection or subscription.
         
         Note:
-            A ordem de adição dos behaviours é importante. O sinal inicial e o
-            pedido de simulação de tráfego devem executar antes do processamento
-            começar a funcionar.
+            The order of behaviour addition is important. The initial signal and
+            traffic simulation request should execute before processing begins.
+            
+            The agent sets presence.approve_all = True to automatically accept
+            all subscription requests, implementing a trust-based agent society.
         """
         if self.verbose:
             print(f"\n{'='*70}")
-            print(f"[{self.name}] Event-Driven Agent iniciado")
-            print(f"[{self.name}] Intervalo de simulação: {self.simulation_interval}s")
-            print(f"[{self.name}] Tempo de simulação do mundo: {self.world_simulation_time}s")
+            print(f"[{self.name}] Event-Driven Agent started")
+            print(f"[{self.name}] Simulation interval: {self.simulation_interval}s")
+            print(f"[{self.name}] World simulation time: {self.world_simulation_time}s")
             print(f"{'='*70}\n")
         else:
-            print(f"[{self.name}] Event-Driven Agent iniciado")
+            print(f"[{self.name}] Event-Driven Agent started")
         self.presence.approve_all = True
         
-        # Subscribe a cada agente individualmente
+        # Subscribe each agent individually
         all_agents = self.registered_vehicles + self.registered_warehouses + self.registered_stores
         if self.world_agent:
             all_agents.append(self.world_agent)
@@ -440,78 +626,97 @@ class EventDrivenAgent(Agent):
         
         self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
         
-        # Behaviour para receber eventos continuamente (deve estar ativo desde o início)
+        # Behaviour to continuously receive events (must be active from the start)
         receive_behaviour = self.ReceiveEventsBehaviour()
         self.add_behaviour(receive_behaviour)
         
-        # Behaviour para enviar mensagem sinaleira inicial (periódico até receber arrival)
-        self.initial_signal_behaviour = self.SendInitialSignalBehaviour(period=10)  # Envia a cada 2s
+        # Behaviour to send initial signal periodically (until first arrival received)
+        self.initial_signal_behaviour = self.SendInitialSignalBehaviour(period=10)  # Send every 10s
         self.add_behaviour(self.initial_signal_behaviour)
         
-        # Behaviour para registrar o transito
+        # Behaviour to register transit (request initial traffic simulation)
         transit_registration_behaviour = self.RegisterTransitBehaviour()
         self.add_behaviour(transit_registration_behaviour)
         
-        # Behaviour periódico para processar eventos (a cada X segundos)
-        # Será iniciado apenas após receber o primeiro arrival
+        # Periodic behaviour to process events (every X seconds)
+        # Will start only after receiving first arrival
         process_behaviour = self.ProcessEventsBehaviour(period=self.simulation_interval)
         self.add_behaviour(process_behaviour)
     
     class RegisterTransitBehaviour(OneShotBehaviour):
-        """
-        Behaviour de execução única que solicita simulação inicial de tráfego.
+        """One-shot behaviour requesting initial traffic simulation.
         
-        Este behaviour executa apenas uma vez durante a inicialização do EventDrivenAgent,
-        envia um pedido ao world agent para simular condições de tráfego por um período
-        x. A simulação inicial é crucial para ter dados de trânsito disponíveis
-        antes do processamento de eventos começar.
+        This behaviour executes only once during EventDrivenAgent initialization,
+        sending a request to the world agent to simulate traffic conditions for a
+        specified period. The initial simulation is crucial for having transit data
+        available before event processing begins.
         
-        Funcionamento:
-            1. Aguarda o agente estar completamente inicializado
-            2. Cria mensagem de pedido com performative "request"
-            3. Define action como "simulate_traffic"
-            4. Envia tempo de simulação e JID do requisitante
-            5. World agent responde com eventos de trânsito
+        The behaviour follows FIPA Request interaction protocol, where this agent
+        acts as the initiator sending a REQUEST performative to the world agent
+        (participant), which will respond with traffic event data.
+        
+        Workflow:
+            1. Wait for agent to be fully initialized
+            2. Create request message with performative "request"
+            3. Set action as "simulate_traffic"
+            4. Send simulation time and requester JID
+            5. World agent responds with transit events
         
         Attributes:
-            Herda attributes de OneShotBehaviour (sem attributes próprios).
+            Inherits attributes from OneShotBehaviour (no own attributes).
         
-        Message Format:
-            {
-                "simulation_time": float,  # Duração da simulação em segundos
-                "requester": str           # JID do event agent
-            }
+        Message Format (FIPA ACL compliant):
+            Metadata:
+                performative: "request"
+                action: "simulate_traffic"
+            Body (JSON):
+                {
+                    "simulation_time": float,  # Simulation duration in seconds
+                    "requester": str           # Event agent JID
+                }
+        
+        FIPA Compliance:
+            Implements FIPA Request Interaction Protocol:
+            - Initiator: EventDrivenAgent (this behaviour)
+            - Participant: WorldAgent
+            - Performative: REQUEST
+            - Expected response: INFORM with traffic events
         
         Note:
-            A resposta do world agent é processada pelo ReceiveEventsBehaviour,
-            que adiciona os eventos de trânsito à lista transit_events.
+            The world agent response is processed by ReceiveEventsBehaviour,
+            which adds transit events to the transit_events list.
         """
         
         async def run(self):
-            """
-            Executa o pedido de simulação de tráfego ao world agent.
+            """Execute traffic simulation request to world agent.
             
-            Este método envia uma mensagem XMPP ao world agent solicitando a simulação
-            de condições de tráfego. O world agent processará o pedido e responderá
-            com uma lista de eventos de trânsito que serão recebidos pelo
-            ReceiveEventsBehaviour.
+            Sends an XMPP message to the world agent requesting traffic condition
+            simulation. The world agent will process the request and respond with
+            a list of transit events that will be received by ReceiveEventsBehaviour.
+            
+            This method implements the REQUEST performative of FIPA ACL, initiating
+            a request-response interaction pattern.
             
             Raises:
-                SPADEException: Se houver falha no envio da mensagem.
+                SPADEException: If message sending fails.
             
             Note:
-                Este método executa apenas uma vez. Pedidos subsequentes de simulação
-                são geridos por eventos de tipo "updatesimulation" na heap.
+                This method executes only once. Subsequent simulation requests
+                are managed by "updatesimulation" type events in the heap.
+                
+            FIPA Compliance:
+                Sends REQUEST performative with structured content following
+                FIPA ACL semantics for service requests.
             """
             if self.agent.verbose:
                 print(f"\n{'='*70}")
-                print(f"[{self.agent.name}] 🌍 SOLICITANDO SIMULAÇÃO DE TRÂNSITO AO WORLD AGENT")
-                print(f"  Destinatário: {self.agent.world_agent}")
-                print(f"  Tempo de simulação: {self.agent.world_simulation_time}s")
+                print(f"[{self.agent.name}] 🌍 REQUESTING TRAFFIC SIMULATION FROM WORLD AGENT")
+                print(f"  Recipient: {self.agent.world_agent}")
+                print(f"  Simulation time: {self.agent.world_simulation_time}s")
                 print(f"{'='*70}\n")
             else:
-                print(f"[{self.agent.name}] 🌍 SOLICITANDO SIMULAÇÃO DE TRÂNSITO AO WORLD AGENT")
-            # Criar mensagem de pedido de simulação
+                print(f"[{self.agent.name}] 🌍 REQUESTING TRAFFIC SIMULATION FROM WORLD AGENT")
+            # Create simulation request message
             msg = Message(to=self.agent.world_agent)
             msg.set_metadata("performative", "request")
             msg.set_metadata("action", "simulate_traffic")
@@ -524,102 +729,116 @@ class EventDrivenAgent(Agent):
             
             await self.send(msg)
             if self.agent.verbose:
-                print(f"[{self.agent.name}] ✅ Pedido de simulação de trânsito enviado ao world agent")
+                print(f"[{self.agent.name}] ✅ Traffic simulation request sent to world agent")
         
     class SendInitialSignalBehaviour(PeriodicBehaviour):
-        """
-        Behaviour de sinalização inicial periódico para activação de veículos.
+        """Periodic behaviour for vehicle activation through initial signaling.
         
-        Este behaviour executa periodicamente (a cada 2 segundos) durante a inicialização,
-        enviando mensagens de "arrival" fictícias a todos os veículos registados até que
-        o primeiro evento de arrival real seja recebido. O objectivo é garantir que os
-        veículos estejam activos e prontos para responder.
+        This behaviour executes periodically (every 10 seconds) during initialization,
+        sending fictitious "arrival" messages to all registered vehicles until the
+        first real arrival event is received. The goal is to ensure vehicles are
+        active and ready to respond to actual events.
         
-        Estratégia de Inicialização:
-            - Utiliza um nome de veículo fictício ("vehicle_init_signal_999")
-            - Tempo do evento é 0.0 (momento inicial)
-            - Envia periodicamente até receber primeiro arrival real
-            - Termina automaticamente quando first_arrival_received = True
-            - Veículos ignoram o evento fictício mas notificam o event agent
+        This pattern implements a "heartbeat" or "keep-alive" mechanism to bootstrap
+        the simulation, following distributed systems principles for node activation.
+        
+        Initialization Strategy:
+            - Uses fictitious vehicle name ("vehicle_init_signal_999")
+            - Event time is 0.1 (near-zero, initial moment)
+            - Sends periodically until first real arrival received
+            - Terminates automatically when first_arrival_received = True
+            - Vehicles ignore the fictitious event but notify event agent
         
         Attributes:
-            Herda attributes de PeriodicBehaviour.
+            Inherits attributes from PeriodicBehaviour (period set to 10 seconds).
         
-        Message Format:
-            {
-                "type": "arrival",
-                "vehicle": "vehicle_init_signal_999",  # Nome fictício
-                "time": 0.0
-            }
+        Message Format (FIPA ACL INFORM):
+            Metadata:
+                performative: \"inform\"
+            Body (JSON):
+                {
+                    \"type\": \"arrival\",
+                    \"vehicle\": \"vehicle_init_signal_999\",  # Fictitious name
+                    \"time\": 0.1
+                }
         
         Examples:
-            >>> # Adicionado automaticamente no setup() com período de 2s
-            >>> initial_signal = self.SendInitialSignalBehaviour(period=2.0)
+            >>> # Automatically added in setup() with 10s period
+            >>> initial_signal = self.SendInitialSignalBehaviour(period=10.0)
             >>> self.add_behaviour(initial_signal)
         
         Note:
-            Este mecanismo garante que todos os veículos estejam prontos para
-            receber eventos antes da simulação começar efectivamente. O behaviour
-            para automaticamente quando o primeiro arrival real é recebido.
+            This mechanism ensures all vehicles are ready to receive events
+            before the simulation effectively begins. The behaviour stops
+            automatically when the first real arrival is received.
+        
+        FIPA Compliance:
+            Uses INFORM performative to notify vehicles of (fictitious) events,
+            implementing a broadcast notification pattern.
         
         Warning:
-            Se registered_vehicles estiver vazio, o behaviour termina sem acção
-            e emite um aviso no log.
+            If registered_vehicles is empty, behaviour terminates without action
+            and emits a warning in the log.
         """
         
         async def run(self):
-            """
-            Envia sinal de inicialização a todos os veículos registados periodicamente.
+            """Send initialization signal to all registered vehicles periodically.
             
-            Itera sobre a lista de veículos registados e envia a cada um uma
-            mensagem de arrival fictícia. Continua a enviar até que o primeiro
-            arrival real seja recebido.
+            Iterates over the list of registered vehicles and sends each one a
+            fictitious arrival message. Continues sending until the first real
+            arrival is received.
+            
+            The method implements a broadcast INFORM pattern, notifying all vehicles
+            to activate their event reception behaviours.
             
             Returns:
-                None: Executa efeitos colaterais (envio de mensagens).
+                None: Executes side effects (message sending).
             
             Note:
-                O behaviour verifica a flag first_arrival_received e termina
-                quando esta é True. O nome fictício "vehicle_init_signal_999"
-                é intencional e não deve corresponder a nenhum veículo real.
+                The behaviour checks the first_arrival_received flag and terminates
+                when it is True. The fictitious name "vehicle_init_signal_999"
+                is intentional and should not correspond to any real vehicle.
+                
+            FIPA Compliance:
+                Sends INFORM performatives to all vehicles in a broadcast pattern.
             """
-            # Verificar se já recebeu o primeiro arrival
+            # Check if first arrival already received
             if self.agent.first_arrival_received:
                 if self.agent.verbose:
-                    print(f"[{self.agent.name}] ✅ Primeiro arrival recebido. Parando envio de sinais iniciais.")
+                    print(f"[{self.agent.name}] ✅ First arrival received. Stopping initial signal sending.")
                 else:
-                    print(f"[{self.agent.name}] ✅ Primeiro arrival recebido.")
-                self.kill()  # Parar este behaviour
+                    print(f"[{self.agent.name}] ✅ First arrival received.")
+                self.kill()  # Stop this behaviour
                 return
             
             if not self.agent.registered_vehicles:
-                print(f"[{self.agent.name}] ⚠️ Nenhum veículo registrado para enviar sinal inicial")
+                print(f"[{self.agent.name}] ⚠️ No registered vehicles to send initial signal")
                 self.kill()
                 return
             
-            # Usar nome fictício que não corresponde a nenhum veículo real
-            vehicle_name_ficticio = "vehicle_init_signal_999"
+            # Use fictitious name that doesn't correspond to any real vehicle
+            fictitious_vehicle_name = "vehicle_init_signal_999"
             
-            # Enviar mensagem para TODOS os veículos registrados
+            # Send message to ALL registered vehicles
             if self.agent.verbose:
                 print(f"\n{'='*70}")
-                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL (periódico)")
-                print(f"  Destinatários: {len(self.agent.registered_vehicles)} veículos")
-                print(f"  Veículo (fictício): {vehicle_name_ficticio}")
-                print(f"  Tipo: arrival")
-                print(f"  Tempo: 0.1")
+                print(f"[{self.agent.name}] 🚦 SENDING INITIAL SIGNAL (periodic)")
+                print(f"  Recipients: {len(self.agent.registered_vehicles)} vehicles")
+                print(f"  Vehicle (fictitious): {fictitious_vehicle_name}")
+                print(f"  Type: arrival")
+                print(f"  Time: 0.1")
                 print(f"{'='*70}")
             else:
-                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL (aguardando arrival real...)")
+                print(f"[{self.agent.name}] 🚦 SENDING INITIAL SIGNAL (waiting for real arrival...)")
             
             for vehicle_jid in self.agent.registered_vehicles:
-                # Criar mensagem de arrival inicial com tempo zero
+                # Create initial arrival message with near-zero time
                 msg = Message(to=vehicle_jid)
                 msg.set_metadata("performative", "inform")
                 
                 data = {
                     "type": "arrival",
-                    "vehicle": vehicle_name_ficticio,  # Nome fictício
+                    "vehicle": fictitious_vehicle_name,  # Fictitious name
                     "time": 0.1
                 }
                 msg.body = json.dumps(data)
@@ -628,102 +847,118 @@ class EventDrivenAgent(Agent):
                 
                 vehicle_name = str(vehicle_jid).split("@")[0]
                 if self.agent.verbose:
-                    print(f"  → Enviado para: {vehicle_name}")
+                    print(f"  → Sent to: {vehicle_name}")
             
             if self.agent.verbose:
                 print(f"{'='*70}\n")
     
     class ReceiveEventsBehaviour(CyclicBehaviour):
-        """
-        Behaviour cíclico de recepção contínua de eventos de múltiplas fontes.
+        """Cyclic behaviour for continuous event reception from multiple sources.
         
-        Este behaviour mantém-se permanentemente activo, recebendo mensagens XMPP
-        de todos os agentes registados (veículos, armazéns, lojas, world agent)
-        e classificando-as em diferentes categorias de eventos. A recepção é
-        não-bloqueante com timeout de 1 segundo para permitir interrupções.
+        This behaviour remains permanently active, receiving XMPP messages from
+        all registered agents (vehicles, warehouses, stores, suppliers, world agent)
+        and classifying them into different event categories. Reception is
+        non-blocking with 1-second timeout to allow interruptions.
         
-        Tipos de Eventos Processados:
-            - **Traffic Events**: Eventos de trânsito do world agent (lista completa)
-            - **Transit**: Eventos manuais de alteração de trânsito
-            - **Arrival**: Eventos de chegada de veículos a nós
-            - **UpdateSimulation**: Pedidos de resimulação de tráfego
-            - **Outros**: Eventos genéricos adicionados à heap principal
+        The behaviour implements a message router pattern, directing different
+        event types to appropriate data structures for later processing.
         
-        Estratégia de Armazenamento:
-            - Transit events → transit_events (lista separada)
-            - Arrival events (time > 0) → arrival_events (buffer temporário)
-            - Arrival events (time = 0) → descartados (sinal inicial)
-            - Outros eventos → event_heap (min heap)
+        Event Types Processed:
+            - **Traffic Events**: Transit events from world agent (complete list)
+            - **Transit**: Manual traffic condition change events
+            - **Arrival**: Vehicle arrival events at nodes
+            - **UpdateSimulation**: Traffic resimulation requests
+            - **Other**: Generic events added to main heap
+        
+        Storage Strategy:
+            - Transit events → transit_events (separate list)
+            - Arrival events (time > 0) → arrival_events (temporary buffer)
+            - Arrival events (time = 0) → discarded (initial signal)
+            - Other events → event_heap (min heap)
         
         Attributes:
-            Herda attributes de CyclicBehaviour.
+            Inherits attributes from CyclicBehaviour.
         
         Message Formats:
-            Traffic Events (do world agent):
-                {
-                    "events": [
-                        {
-                            "instant": float,
-                            "node1_id": int,
-                            "node2_id": int,
-                            "new_time": float,
-                            "new_fuel_consumption": float,
-                        },
-                        ...
-                    ]
-                }
+            Traffic Events (from world agent):
+                Metadata:
+                    performative: \"inform\"
+                    action: \"traffic_events\"
+                Body (JSON):
+                    {
+                        \"events\": [
+                            {
+                                \"instant\": float,
+                                \"node1_id\": int,
+                                \"node2_id\": int,
+                                \"new_time\": float,
+                                \"new_fuel_consumption\": float,
+                            },
+                            ...
+                        ]
+                    }
             
-            Eventos Genéricos:
-                {
-                    "type": str,
-                    "time": float,
-                    "data": Dict[str, Any],
-                }
+            Generic Events:
+                Metadata:
+                    performative: \"inform\"
+                Body (JSON):
+                    {
+                        \"type\": str,
+                        \"time\": float,
+                        \"data\": Dict[str, Any],
+                    }
         
         Examples:
-            >>> # O behaviour executa continuamente após adição
+            >>> # Behaviour executes continuously after addition
             >>> receive_behaviour = self.ReceiveEventsBehaviour()
             >>> self.add_behaviour(receive_behaviour)
         
         Note:
-            O timeout de 1 segundo permite que o behaviour verifique periodicamente
-            se deve terminar (e.g., quando o agente é parado). Mensagens recebidas
-            são imediatamente processadas e classificadas.
+            The 1-second timeout allows the behaviour to periodically check
+            if it should terminate (e.g., when agent is stopped). Received
+            messages are immediately processed and classified.
+        
+        FIPA Compliance:
+            Processes FIPA ACL messages with INFORM performative, acting as
+            a receiver in multiple interaction protocols initiated by other agents.
         
         Warning:
-            Erros no parsing de JSON são capturados e registados, mas não interrompem
-            o behaviour. Eventos malformados são descartados.
+            JSON parsing errors are caught and logged, but do not interrupt
+            the behaviour. Malformed events are discarded.
         
         See Also:
-            ProcessEventsBehaviour: Processa os eventos armazenados.
-            Event: Estrutura de dados para representar eventos.
+            ProcessEventsBehaviour: Processes stored events.
+            Event: Data structure for representing events.
         """
         
         async def run(self):
-            """
-            Ciclo de recepção e classificação de mensagens de eventos.
+            """Cycle of event message reception and classification.
             
-            Este método executa continuamente, aguardando mensagens com timeout de
-            1 segundo. Quando uma mensagem é recebida, identifica o tipo de evento
-            e armazena-o na estrutura de dados apropriada.
+            This method executes continuously, awaiting messages with 1-second
+            timeout. When a message is received, it identifies the event type
+            and stores it in the appropriate data structure.
             
-            Fluxo de Processamento:
-                1. Aguarda mensagem com timeout de 1s
-                2. Verifica se é resposta de traffic events do world agent
-                3. Se sim, processa lista completa de eventos de trânsito
-                4. Se não, identifica tipo de evento individual
-                5. Armazena em transit_events, arrival_events ou event_heap
-                6. Incrementa contador de eventos recebidos
+            Processing Flow:
+                1. Await message with 1s timeout
+                2. Check if it's traffic events response from world agent
+                3. If yes, process complete list of transit events
+                4. If no, identify individual event type
+                5. Store in transit_events, arrival_events, or event_heap
+                6. Increment received events counter
             
             Returns:
-                None: Executa continuamente até o behaviour ser removido.
+                None: Executes continuously until behaviour is removed.
             
             Raises:
-                Exception: Captura e regista erros de parsing sem interromper.
+                Exception: Catches and logs parsing errors without interrupting.
             
             Note:
-                Para eventos de trânsito do world agent, também cria um evento
-                de resimulação automático após world_simulation_time.
+                For transit events from world agent, also creates an automatic
+                resimulation event after world_simulation_time.
+                
+            FIPA Compliance:
+                Receives and processes INFORM performatives from multiple agents,
+                implementing receiver role in FIPA interaction protocols.
             """
             msg = await self.receive(timeout=1)
             
@@ -763,10 +998,10 @@ class EventDrivenAgent(Agent):
                             # Adicionar à lista de eventos de trânsito
                             self.agent.transit_events.append(transit_event)
                             if self.agent.verbose:
-                                print(f"[{self.agent.name}] 📩 Evento de trânsito adicionado: Edge ({event_data.get('node1_id')} → {event_data.get('node2_id')}), time={event_data.get('new_time')}, instant={event_data.get('instant')}")
+                                print(f"[{self.agent.name}] 📩 Transit event added: Edge ({event_data.get('node1_id')} → {event_data.get('node2_id')}), time={event_data.get('new_time')}, instant={event_data.get('instant')}")
                         
                         if self.agent.verbose:
-                            print(f"[{self.agent.name}] ✅ Total de eventos de trânsito: {len(self.agent.transit_events)}")
+                            print(f"[{self.agent.name}] ✅ Total transit events: {len(self.agent.transit_events)}")
                         
                         # Criar evento para solicitar nova simulação após world_simulation_time
                         resimulation_event = Event(
@@ -777,7 +1012,7 @@ class EventDrivenAgent(Agent):
                         )
                         heapq.heappush(self.agent.event_heap, resimulation_event)
                         if self.agent.verbose:
-                            print(f"[{self.agent.name}] 🔄 Evento de resimulação adicionado à heap: {resimulation_event}")
+                            print(f"[{self.agent.name}] 🔄 Resimulation event added to heap: {resimulation_event}")
                         
                         return
                     
@@ -810,8 +1045,8 @@ class EventDrivenAgent(Agent):
                         # Adicionar à lista de trânsito
                         self.agent.transit_events.append(event)
                         if self.agent.verbose:
-                            print(f"[{self.agent.name}] 📩 Evento de trânsito manual recebido: {event}")
-                            print(f"   Eventos de trânsito: {len(self.agent.transit_events)}")
+                            print(f"[{self.agent.name}] 📩 Manual transit event received: {event}")
+                            print(f"   Transit events: {len(self.agent.transit_events)}")
                     elif event_type == "arrival":
                             if not self.agent.first_arrival_received:
                                 self.agent.first_arrival_received = True
@@ -838,128 +1073,138 @@ class EventDrivenAgent(Agent):
                     print(f"[{self.agent.name}] ❌ Erro ao processar mensagem: {e}")
     
     class ProcessEventsBehaviour(PeriodicBehaviour):
-        """
-        Behaviour periódico responsável pelo processamento temporal de eventos.
+        """Periodic behaviour responsible for temporal event processing.
         
-        Este behaviour é o núcleo do sistema de simulação temporal, executando em
-        intervalos regulares (definidos por simulation_interval) para processar
-        eventos que ocorrem no mesmo instante temporal. Implementa uma estratégia
-        sofisticada de gestão de tempo, garantindo sincronização correcta entre
-        todos os eventos e agentes.
+        This behaviour is the core of the temporal simulation system, executing at
+        regular intervals (defined by simulation_interval) to process events that
+        occur at the same temporal instant. It implements a sophisticated time
+        management strategy, ensuring correct synchronization between all events
+        and agents.
         
-        Estratégia de Processamento:
-            1. **Transferência de Arrivals**: Move eventos de arrival do buffer para a heap
-            2. **Integração de Trânsito**: Recoloca eventos de trânsito na heap
-            3. **Selecção por Tempo**: Extrai o primeiro evento (menor tempo)
-            4. **Agrupamento**: Colecta todos eventos com o mesmo tempo
-            5. **Processamento**: Notifica agentes relevantes sobre os eventos
-            6. **Actualização de Trânsito**: Decrementa tempo dos eventos de trânsito restantes
-            7. **Limpeza**: Esvazia heap (descarta eventos futuros até próximo ciclo)
-            8. **Resimulação**: Solicita nova simulação se necessário
+        The behaviour implements a discrete event simulation (DES) approach, where
+        time advances in discrete steps and all events at each time step are
+        processed simultaneously.
         
-        Gestão de Tempo:
-            - Apenas eventos com tempo igual ao do primeiro evento são processados
-            - Eventos de trânsito têm tempo decrementado continuamente
-            - Primeiro evento de cada tipo tem tempo real, subsequentes tempo 0
-            - Evita simulação duplicada do mesmo intervalo temporal
+        Processing Strategy:
+            1. **Arrival Transfer**: Move arrival events from buffer to heap
+            2. **Transit Integration**: Reinsert transit events into heap
+            3. **Time Selection**: Extract first event (smallest time)
+            4. **Grouping**: Collect all events with same time
+            5. **Processing**: Notify relevant agents about events
+            6. **Transit Update**: Decrement time of remaining transit events
+            7. **Cleanup**: Empty heap (discard future events until next cycle)
+            8. **Resimulation**: Request new simulation if needed
+        
+        Time Management:
+            - Only events with time equal to first event are processed
+            - Transit events have time decremented continuously
+            - First event of each type has real time, subsequent ones time 0
+            - Avoids duplicate simulation of same temporal interval
         
         Attributes:
-            period (float): Intervalo em segundos entre execuções (herdado de PeriodicBehaviour).
+            period (float): Interval in seconds between executions (inherited from PeriodicBehaviour).
         
-        Fluxo de Notificação:
-            - Arrival events → Todos os veículos (mensagem agrupada)
-            - Transit events → Veículos + Armazéns + Lojas
+        Notification Flow:
+            - Arrival events → All vehicles (grouped message)
+            - Transit events → Vehicles + Warehouses + Stores
             - UpdateSimulation events → World agent
         
         Examples:
-            >>> # Criado automaticamente no setup() com período configurável
+            >>> # Automatically created in setup() with configurable period
             >>> process_behaviour = self.ProcessEventsBehaviour(period=5.0)
             >>> self.add_behaviour(process_behaviour)
         
         Note:
-            O esvaziamento da heap após processamento é intencional. Garante que
-            apenas eventos do próximo instante temporal sejam considerados no
-            próximo ciclo, evitando inconsistências temporais.
+            Emptying the heap after processing is intentional. It ensures only
+            events from the next temporal instant are considered in the next cycle,
+            avoiding temporal inconsistencies.
+        
+        FIPA Compliance:
+            Implements FIPA Inform protocol when notifying agents of processed
+            events, acting as initiator in broadcast notification patterns.
         
         Warning:
-            Se a heap estiver vazia, o ciclo é saltado. Isto é normal quando não
-            há eventos pendentes.
+            If the heap is empty, the cycle is skipped. This is normal when there
+            are no pending events.
         
         See Also:
-            notify_events: Método interno para distribuir eventos processados.
-            Event: Estrutura de dados dos eventos.
+            notify_events: Internal method to distribute processed events.
+            Event: Event data structure.
         """
         
         async def run(self):
-            """
-            Executa um ciclo de processamento de eventos.
+            """Execute one cycle of event processing.
             
-            Este método é chamado periodicamente pelo framework SPADE no intervalo
-            definido por simulation_interval. Coordena todas as etapas de processamento,
-            desde a preparação da heap até a notificação dos agentes.
+            This method is called periodically by SPADE framework at the interval
+            defined by simulation_interval. It coordinates all processing steps,
+            from heap preparation to agent notification.
             
-            Etapas Detalhadas:
-                1. **Preparação da Heap**:
-                   - Transfere arrival_events para event_heap
-                   - Recoloca transit_events na heap
-                   - Esvazia buffers temporários
+            Detailed Steps:
+                1. **Heap Preparation**:
+                   - Transfer arrival_events to event_heap
+                   - Reinsert transit_events into heap
+                   - Empty temporary buffers
                 
-                2. **Verificação de Eventos**:
-                   - Se heap vazia, termina ciclo
-                   - Regista estado para logging
+                2. **Event Verification**:
+                   - If heap empty, terminate cycle
+                   - Log state for monitoring
                 
-                3. **Extração de Eventos**:
-                   - Remove primeiro evento (menor tempo)
-                   - Colecta eventos subsequentes com mesmo tempo
-                   - Cria lista de eventos a processar
+                3. **Event Extraction**:
+                   - Remove first event (smallest time)
+                   - Collect subsequent events with same time
+                   - Create list of events to process
                 
-                4. **Gestão de Trânsito**:
-                   - Remove eventos de trânsito da lista separada
-                   - Detecta se foi o último evento de trânsito
-                   - Actualiza tempo de eventos restantes
+                4. **Transit Management**:
+                   - Remove transit events from separate list
+                   - Detect if last transit event was processed
+                   - Update time of remaining events
                 
-                5. **Notificação**:
-                   - Chama notify_events() para distribuir aos agentes
-                   - Aguarda confirmações de envio
+                5. **Notification**:
+                   - Call notify_events() to distribute to agents
+                   - Await send confirmations
                 
-                6. **Resimulação**:
-                   - Se último evento de trânsito processado
-                   - Envia pedido de nova simulação ao world agent
+                6. **Resimulation**:
+                   - If last transit event processed
+                   - Send new simulation request to world agent
                 
-                7. **Estatísticas**:
-                   - Actualiza contadores
-                   - Gera logs detalhados se verbose=True
+                7. **Statistics**:
+                   - Update counters
+                   - Generate detailed logs if verbose=True
                 
-                8. **Limpeza**:
-                   - Esvazia event_heap
-                   - Prepara para próximo ciclo
+                8. **Cleanup**:
+                   - Empty event_heap
+                   - Prepare for next cycle
             
             Returns:
-                None: Executa efeitos colaterais (notificações e actualizações de estado).
+                None: Executes side effects (notifications and state updates).
             
             Note:
-                O decremento do tempo dos eventos de trânsito garante que o tempo
-                restante reflicta sempre o intervalo até ao próximo processamento.
-                O processamento só começa após receber o primeiro arrival real.
+                Decrementing transit event time ensures remaining time always
+                reflects interval until next processing. Processing only begins
+                after receiving first real arrival.
             
             Examples:
-                >>> # Exemplo de log verbose durante execução
-                [event_agent] 🔄 PROCESSANDO EVENTOS
-                [event_agent] Tempo de simulação: 5.0s
-                [event_agent] Eventos na heap: 3
-                [event_agent] Eventos de trânsito: 5
+                >>> # Example verbose log during execution
+                [event_agent] 🔄 PROCESSING EVENTS
+                [event_agent] Simulation time: 5.0s
+                [event_agent] Events in heap: 3
+                [event_agent] Transit events: 5
                 
-                [event_agent] 📤 Próximo evento: Event(type=arrival, time=10.50, sender=vehicle1@localhost)
-                [event_agent] 📋 Total de eventos com tempo 10.50s: 2
+                [event_agent] 📤 Next event: Event(type=arrival, time=10.50, sender=vehicle1@localhost)
+                [event_agent] 📋 Total events with time 10.50s: 2
                 
-                [event_agent] 📢 Notificando evento ARRIVAL agrupado para 3 veículos
-                   Veículos que chegaram: ['vehicle1', 'vehicle2']
+                [event_agent] 📢 Notifying grouped ARRIVAL event to 3 vehicles
+                   Arrived vehicles: ['vehicle1', 'vehicle2']
+            
+            FIPA Compliance:
+                Sends INFORM performatives to notify agents of processed events,
+                implementing broadcast notification pattern.
             """
-            # Verificar se já recebeu o primeiro arrival antes de processar
+            # Check if first arrival received before processing
             if not self.agent.first_arrival_received:
                 if self.agent.verbose:
-                    print(f"[{self.agent.name}] ⏸️ Aguardando primeiro arrival antes de processar heap...")
-                return  # Não processar até receber o primeiro arrival
+                    print(f"[{self.agent.name}] ⏸️ Waiting for first arrival before processing heap...")
+                return  # Don't process until first arrival received
             
             # Adicionar eventos de arrival à heap e esvaziar a lista
             for arrival_event in self.agent.arrival_events:
@@ -976,9 +1221,9 @@ class EventDrivenAgent(Agent):
             if self.agent.verbose:
                 print(f"\n{'='*70}")
                 print(f"[{self.agent.name}] 🔄 PROCESSANDO EVENTOS")
-                print(f"[{self.agent.name}] Tempo de simulação: {self.agent.simulation_interval}s")
+                print(f"[{self.agent.name}] Simulation time: {self.agent.simulation_interval}s")
                 print(f"[{self.agent.name}] Eventos na heap: {len(self.agent.event_heap)}")
-                print(f"[{self.agent.name}] Eventos de trânsito: {len(self.agent.transit_events)}")
+                print(f"[{self.agent.name}] Transit events: {len(self.agent.transit_events)}")
                 print(f"{'='*70}\n")
             
             if not self.agent.event_heap:
@@ -991,7 +1236,7 @@ class EventDrivenAgent(Agent):
             event_time = first_event.time
             events_to_process = [first_event]
             
-            print(f"[{self.agent.name}] 📤 Próximo evento: {first_event}")
+            print(f"[{self.agent.name}] 📤 Next event: {first_event}")
             
             # Continuar a dar pop enquanto houver eventos com o mesmo tempo
             while self.agent.event_heap and self.agent.event_heap[0].time == event_time:
@@ -1010,7 +1255,7 @@ class EventDrivenAgent(Agent):
                     if event in self.agent.transit_events:
                         self.agent.transit_events.remove(event)
                         if self.agent.verbose:
-                            print(f"[{self.agent.name}] 🗑️  Evento de trânsito removido da lista: {event}")
+                            print(f"[{self.agent.name}] 🗑️  Transit event removed from list: {event}")
             
             # Verificar se era o último evento de trânsito
             if len(self.agent.transit_events) == 0:
@@ -1246,7 +1491,6 @@ class EventDrivenAgent(Agent):
                 recipients = (self.agent.registered_vehicles + 
                             self.agent.registered_stores
                             ) # TODO + self.agent.registered_warehouses + self.agent.registered_suppliers
-                print(recipients)
                 if self.agent.verbose:
                     print(f"\n[{self.agent.name}] 📢 Notificando evento TRANSIT para {len(recipients)} agentes")
                 
@@ -1294,587 +1538,3 @@ class EventDrivenAgent(Agent):
                         print(f"\n[{self.agent.name}] ⚠️  Agente do mundo não registrado, evento ignorado")
     
 
-async def main():
-    """
-    Função principal para execução de teste completo do sistema Event-Driven Agent.
-    
-    Esta função de teste demonstra a integração completa entre o EventDrivenAgent,
-    veículos, armazéns e o world agent. Cria um ambiente de simulação realista
-    com um mundo gerado proceduralmente, múltiplos veículos, e eventos dinâmicos
-    de tráfego e entregas.
-    
-    Componentes Criados:
-        1. **World**: Grafo 10x10 com tráfego dinâmico, highways e localizações
-        2. **World Agent**: Simula condições de tráfego e gera eventos
-        3. **Event Agent**: Coordena todos os eventos da simulação
-        4. **Veículos (3x)**: Agentes móveis que respondem a ordens e eventos
-        5. **Warehouse Agent**: Envia ordens de teste aos veículos
-    
-    Configurações do Mundo:
-        - Dimensões: 10x10 nós
-        - Modo: "different" (custos variados)
-        - Custo máximo de aresta: 4
-        - Warehouses: 5
-        - Suppliers: 1
-        - Stores: 4
-        - Highway: Activada
-        - Probabilidade de tráfego: 0.5
-        - Probabilidade de propagação: 0.8
-        - Intervalo de tráfego: 2 segundos
-        - Probabilidade de destráfego: 0.4
-    
-    Parâmetros de Simulação:
-        - Intervalo de processamento de eventos: 10.0s
-        - Tempo de simulação de tráfego: 10.0s
-        - Modo verboso: False (logs reduzidos)
-    
-    Fluxo de Execução:
-        1. **Inicialização**:
-           - Cria mundo com configurações especificadas
-           - Identifica localizações de stores para veículos
-           - Cria 3 veículos com capacidades idênticas
-           - Cria event agent com veículos registados
-           - Cria world agent com o mundo
-           - Cria warehouse de teste
-        
-        2. **Arranque**:
-           - Inicia world agent primeiro (dependência)
-           - Inicia veículos sequencialmente
-           - Inicia warehouse de teste
-           - Inicia event agent (coordenador)
-        
-        3. **Execução Contínua**:
-           - Loop assíncrono aguarda interrupção
-           - Utilizador pode parar com Ctrl+C
-        
-        4. **Encerramento**:
-           - Para todos os agentes graciosamente
-           - Limpa recursos e conexões XMPP
-    
-    Raises:
-        ValueError: Se o mundo não tiver warehouses ou stores suficientes.
-        KeyboardInterrupt: Capturada para encerramento limpo.
-    
-    Examples:
-        >>> # Executar teste completo
-        >>> asyncio.run(main())
-        
-        # Output esperado:
-        ======================================================================
-        TESTE DO EVENT-DRIVEN AGENT COM WORLD AGENT
-        ======================================================================
-        
-        🌍 Criando o mundo...
-        ✓ Mundo criado: 10x10
-        ✓ Nós no grafo: 100
-        ✓ Arestas no grafo: 180
-        
-        🚚 Criando veículo...
-           Localização inicial: 42
-           Capacidade: 1000 kg
-           Combustível máximo: 100 L
-        
-        ⚙️ Criando Event Agent...
-        🌍 Criando World Agent...
-        📦 Criando Warehouse de teste...
-        
-        🚀 Iniciando agentes...
-        [SISTEMA] ✓ Sistema de teste iniciado!
-        [SISTEMA] 🎯 Event Agent processando a cada 10.0s
-        [SISTEMA] ⌨️  Pressione Ctrl+C para parar
-    
-    Note:
-        Esta função requer que o servidor XMPP (Openfire/Prosody) esteja em execução
-        e acessível em localhost. As credenciais dos agentes devem estar previamente
-        configuradas no servidor.
-    
-    Warning:
-        A função executa indefinidamente até receber KeyboardInterrupt (Ctrl+C).
-        Certifique-se de parar a execução adequadamente para evitar agentes órfãos.
-    
-    See Also:
-        EventDrivenAgent: Agente coordenador de eventos.
-        Veiculo: Agente de veículo móvel.
-        WorldAgent: Agente de simulação de tráfego.
-        TestWarehouseAgent: Agente de teste de armazém.
-        World: Classe de geração de mundo.
-    """
-    import sys
-    import os
-    
-    # Adicionar diretório pai ao path
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    
-    from veiculos.veiculos import Veiculo
-    from veiculos.test_vehicle_agent import TestWarehouseAgent
-    from world.world import World
-    from supplier import Supplier
-    from store import Store
-    from warehouse import Warehouse
-    # Configurações dos agentes
-    EVENT_AGENT_JID = "event_agent@localhost"
-    EVENT_AGENT_PASSWORD = "event123"
-    WORLD_AGENT_JID = "world@localhost"
-    WORLD_AGENT_PASSWORD = "password"
-    WAREHOUSE_JID = "warehouse1_test@localhost"
-    WAREHOUSE_PASSWORD = "warehouse123"
-    WAREHOUSE1_JID = "warehouse2_test@localhost"
-    WAREHOUSE1_PASSWORD = "warehouse234"
-    STORE_JID = "store1_test@localhost"
-    STORE_PASSWORD = "store123"
-    STORE_JID_2 = "store2_test@localhost"
-    STORE_PASSWORD_2 = "store234"
-    SUPLIER_JID = "supplier1_test@localhost"
-    SUPLIER_PASSWORD = "supplier123"
-    SUPLIER_JID_2 = "supplier2_test@localhost"
-    SUPLIER_PASSWORD_2 = "supplier234"
-    VEHICLE_JID = "vehicle1@localhost"
-    VEHICLE_PASSWORD = "vehicle123"
-    VEHICLE_JID_2 = "vehicle2@localhost"
-    VEHICLE_PASSWORD_2 = "vehicle234"
-    VEHICLE_JID_3 = "vehicle3@localhost"
-    VEHICLE_PASSWORD_3 = "vehicle345"
-    
-    print("="*70)
-    print("TESTE DO EVENT-DRIVEN AGENT COM WORLD AGENT")
-    print("="*70)
-    
-    # Criar o mundo
-    print("\n🌍 Criando o mundo...")
-    world = World(
-        width=5,
-        height=5,
-        mode="different", 
-        max_cost=4, 
-        gas_stations=0, 
-        warehouses=1,
-        suppliers=1, 
-        stores=1, 
-        highway=True,
-        traffic_probability=0.5,
-        traffic_spread_probability=0.8,
-        traffic_interval=2,
-        untraffic_probability=0.4
-    )
-    
-    import matplotlib.pyplot as plt
-    #world.plot_graph()
-    
-    print(f"✓ Mundo criado: {world.width}x{world.height}")
-    print(f"✓ Nós no grafo: {len(world.graph.nodes)}")
-    print(f"✓ Arestas no grafo: {len(world.graph.edges)}")
-    
-    # Identificar uma localização inicial para o veículo (primeiro store)
-    store_locations = []
-    for node_id, node in world.graph.nodes.items():
-        if hasattr(node, 'store') and node.store:
-            store_locations.append(node_id)
-    
-
-    warehouse_locations = []
-    for node_id, node in world.graph.nodes.items():
-        if hasattr(node, 'warehouse') and node.warehouse:
-            warehouse_locations.append(node_id)
-
-    suplier_locations = []
-    for node_id, node in world.graph.nodes.items():
-        if hasattr(node, 'supplier') and node.supplier:
-            suplier_locations.append(node_id)
-    if not store_locations:
-        print("❌ ERRO: Não foram encontrados stores para localização inicial do veículo!")
-        return
-    
-    
-    all_contacts = [WAREHOUSE_JID, STORE_JID, SUPLIER_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3, WAREHOUSE1_JID, STORE_JID_2, SUPLIER_JID_2]
-    # Criar o veículo
-    vehicle = Veiculo(
-        jid=VEHICLE_JID,
-        password=VEHICLE_PASSWORD,
-        max_fuel=100,
-        capacity=1000,
-        max_orders=10,
-        map=world.graph,
-        weight=1500,
-        current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID,
-        verbose=False
-    )
-    vehicle_2 = Veiculo(
-        jid=VEHICLE_JID_2,
-        password=VEHICLE_PASSWORD_2,
-        max_fuel=100,
-        capacity=1000,
-        max_orders=10,
-        map=world.graph,
-        weight=1500,
-        current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID,
-        verbose=False
-    )
-    vehicle_3 = Veiculo(
-        jid=VEHICLE_JID_3,
-        password=VEHICLE_PASSWORD_3,
-        max_fuel=100,
-        capacity=1000,
-        max_orders=10,
-        map=world.graph,
-        weight=1500,
-        current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID,
-        verbose=False
-    )
-    warehouse_1= Warehouse(
-        jid=WAREHOUSE_JID,
-        password=WAREHOUSE_PASSWORD,
-        map=world.graph,
-        node_id=warehouse_locations[0],
-        contact_list=all_contacts
-    )
-    warehouse_2= Warehouse(
-        jid=WAREHOUSE1_JID,
-        password=WAREHOUSE1_PASSWORD,
-        map=world.graph,
-        node_id=warehouse_locations[0],
-        contact_list=all_contacts
-    )
-
-    store_1= Store(
-        jid=STORE_JID,
-        password=STORE_PASSWORD,
-        map=world.graph,
-        node_id=store_locations[0],
-        contact_list=[WAREHOUSE_JID],
-        verbose=False
-    )
-    store_2= Store(
-        jid=STORE_JID_2,
-        password=STORE_PASSWORD_2,
-        map=world.graph,
-        node_id=store_locations[0],
-        contact_list=[WAREHOUSE1_JID],
-        verbose=False
-    )
-    
-    supplier_1= Supplier(
-        jid=SUPLIER_JID,
-        password=SUPLIER_PASSWORD,
-        map=world.graph,
-        node_id=suplier_locations[0],
-        contact_list=[WAREHOUSE_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3]
-    )
-    
-    # Criar event agent com lista de veículos registrados e world agent
-    print(f"\n⚙️ Criando Event Agent...")
-    event_agent = EventDrivenAgent(
-        jid=EVENT_AGENT_JID,
-        password=EVENT_AGENT_PASSWORD,
-        simulation_interval=10.0,
-        registered_vehicles=[VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3],
-        registered_warehouses=[WAREHOUSE_JID],
-        registered_stores=[STORE_JID],
-        registered_suppliers=[SUPLIER_JID],
-        world_agent=WORLD_AGENT_JID,
-        world_simulation_time=10.0,
-        verbose=False
-    )
-    
-    # Criar world agent com o world já instanciado
-    print(f"\n🌍 Criando World Agent...")
-    from world_agent import WorldAgent
-    world_agent = WorldAgent(WORLD_AGENT_JID, WORLD_AGENT_PASSWORD, world=world)
-    '''
-    # Criar warehouse de teste
-    print(f"\n📦 Criando Warehouse de teste...")
-    try:
-        warehouse = TestWarehouseAgent(
-            jid=WAREHOUSE_JID,
-            password=WAREHOUSE_PASSWORD,
-            vehicle_jids=[VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3],
-            world=world
-        )
-    except ValueError as e:
-        print(f"\n❌ ERRO: {e}")
-        print("Certifique-se de que o mundo tem warehouses e stores suficientes!")
-        return'''
-    
-    print("\n" + "="*70)
-    print(f"Event Agent JID: {EVENT_AGENT_JID}")
-    print(f"Warehouse JID: {WAREHOUSE_JID}")
-    print(f"Vehicle JID: {VEHICLE_JID}")
-    print("="*70)
-    
-    # Iniciar todos os agentes
-    print("\n🚀 Iniciando agentes...")
-    
-    # Iniciar world agent primeiro
-    print(f"🌍 Iniciando World Agent...")
-    await world_agent.start()
-    print(f"✓ World Agent iniciado: {WORLD_AGENT_JID}")
-    
-    await vehicle.start()
-    print(f"✓ Veículo iniciado: {VEHICLE_JID}")
-
-    await vehicle_2.start()
-    print(f"✓ Veículo iniciado: {VEHICLE_JID_2}")
-    
-    await vehicle_3.start()
-    print(f"✓ Veículo iniciado: {VEHICLE_JID_3}")
-    
-    await warehouse_1.start()
-    print(f"✓ Warehouse iniciado: {WAREHOUSE_JID}")
-
-    await supplier_1.start()
-    print(f"✓ Supplier iniciado: {SUPLIER_JID}")
-
-    await store_1.start()
-    print(f"✓ Store iniciado: {STORE_JID}")
-
-    await event_agent.start(auto_register=True)
-    print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
-
-    
-    
-    print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
-    print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
-    print(f"[SISTEMA] 🚦 Event Agent solicitando simulação de tráfego ao World Agent")
-    print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
-    print(f"[SISTEMA] ⌨️  Pressione Ctrl+C para parar\n")
-    
-    try:
-        # Manter os agentes rodando
-        while True:
-            await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        print("\n[SISTEMA] Parando agentes...")
-    finally:
-        await event_agent.stop()
-        await warehouse_1.stop()
-        await supplier_1.stop()
-        await store_1.stop()
-        await vehicle.stop()
-        await vehicle_2.stop()
-        await vehicle_3.stop()
-        await world_agent.stop()
-        print("[SISTEMA] ✓ Agentes parados!")
-
-
-
-if __name__ == "__main__":
-    """
-    Ponto de entrada do script de teste do Event-Driven Agent.
-    
-    Este bloco de documentação fornece informação completa sobre o propósito,
-    funcionamento e utilização do script de teste. Serve como guia de referência
-    para programadores que pretendam compreender ou modificar o sistema.
-    
-    Descrição Geral:
-        Script de teste e demonstração das capacidades do Event-Driven Agent
-        integrado com múltiplos agentes num ambiente de simulação de cadeia de
-        abastecimento. Demonstra interacções complexas entre veículos, armazéns,
-        lojas e simulação de tráfego dinâmico.
-    
-    Características do Teste:
-        - **Mundo Realista**: Grafo 10x10 com tráfego probabilístico
-        - **Múltiplos Veículos**: 3 veículos competindo por entregas
-        - **Ordens Dinâmicas**: Warehouse envia ordens aleatórias periodicamente
-        - **Tráfego Simulado**: World agent actualiza condições de tráfego
-        - **Processamento Temporal**: Event agent coordena eventos cronologicamente
-        - **Comunicação XMPP**: Sistema multi-agente distribuído
-    
-    Agentes Criados no Teste:
-        1. **EventDrivenAgent** (event_agent@localhost):
-           - Coordenador central de eventos
-           - Gere heap de eventos por tempo
-           - Notifica agentes sobre ocorrências
-           - Solicita simulações de tráfego
-        
-        2. **WorldAgent** (world@localhost):
-           - Simula condições de tráfego
-           - Gera eventos de alteração de arestas
-           - Responde a pedidos de simulação
-        
-        3. **Veículos** (vehicle1/2/3@localhost):
-           - Recebem ordens de armazéns
-           - Calculam rotas optimizadas
-           - Enviam eventos de chegada (arrival)
-           - Actualizam mapas com informação de tráfego
-        
-        4. **TestWarehouseAgent** (warehouse_test@localhost):
-           - Simula armazém enviando ordens
-           - Aceita 80% das propostas de veículos
-           - Gera eventos de teste (arrival/transit)
-    
-    Fluxo de Teste Detalhado:
-        **Fase 1 - Inicialização (0-5s)**:
-            1. Event agent envia sinal inicial fictício aos veículos
-            2. Veículos activam seus behaviours de recepção
-            3. Event agent solicita primeira simulação de tráfego
-            4. World agent processa e retorna eventos de trânsito
-        
-        **Fase 2 - Operação Normal (5s+)**:
-            1. Warehouse envia ordens a veículos (a cada 5s)
-            2. Veículos calculam rotas e propõem entregas
-            3. Warehouse aceita propostas (80%)
-            4. Veículos confirmam e planeiam rotas
-            5. Veículos enviam eventos de arrival ao event agent
-            6. Event agent processa eventos a cada 10s
-            7. World agent actualiza tráfego continuamente
-        
-        **Fase 3 - Processamento de Eventos**:
-            1. Event agent colecta eventos de arrival
-            2. Agrupa arrivals do mesmo momento
-            3. Processa eventos de trânsito
-            4. Notifica todos os veículos
-            5. Veículos actualizam mapas e recalculam rotas
-        
-        **Fase 4 - Resimulação de Tráfego**:
-            1. Último evento de trânsito é processado
-            2. Event agent solicita nova simulação
-            3. World agent gera novos eventos futuros
-            4. Ciclo recomeça
-    
-    Eventos Testados:
-        - **arrival**: Chegada de veículo a warehouse/store/gas_station
-          - Enviado por veículos ao event agent
-          - Agrupado por momento temporal
-          - Distribuído a todos os veículos
-        
-        - **Transit**: Alteração de peso/consumo em aresta do grafo
-          - Gerado pelo world agent
-          - Enviado a veículos, warehouses e stores
-          - Primeiro tem tempo real, subsequentes tempo 0
-        
-        - **updatesimulation**: Pedido de nova simulação de tráfego
-          - Gerado automaticamente pelo event agent
-          - Enviado ao world agent
-          - Desencadeia nova simulação
-    
-    Configuração XMPP Necessária:
-        - Servidor: localhost (Openfire/Prosody/ejabberd)
-        - Porta: 5222 (padrão XMPP)
-        - Contas criadas:
-          * event_agent@localhost (senha: event123)
-          * world@localhost (senha: password)
-          * warehouse_test@localhost (senha: warehouse123)
-          * vehicle1@localhost (senha: vehicle123)
-          * vehicle2@localhost (senha: vehicle234)
-          * vehicle3@localhost (senha: vehicle345)
-    
-    Estrutura de Dados Principais:
-        - **event_heap**: Min heap ordenada por tempo
-        - **transit_events**: Lista de eventos de trânsito activos
-        - **arrival_events**: Buffer temporário para arrivals
-        - **registered_vehicles**: Lista de JIDs de veículos
-    
-    Padrões de Mensagem XMPP:
-        Todas as mensagens seguem formato JSON com metadados XMPP:
-        
-        ```python
-        msg = Message(to=recipient_jid)
-        msg.set_metadata("performative", "inform|request")
-        msg.set_metadata("action", "simulate_traffic|event_notification")
-        msg.body = json.dumps({...})
-        ```
-    
-    Como Executar:
-        1. **Iniciar Servidor XMPP**:
-           ```bash
-           # Openfire (Windows)
-           openfire.exe start
-           
-           # Prosody (Linux)
-           sudo systemctl start prosody
-           ```
-        
-        2. **Criar Contas XMPP**:
-           Aceder à interface admin do servidor e criar as 6 contas listadas acima.
-        
-        3. **Executar Script**:
-           ```bash
-           cd Eventos
-           python event_agent.py
-           ```
-        
-        4. **Observar Logs**:
-           Monitorizar interacções entre agentes através dos prints.
-        
-        5. **Parar Execução**:
-           Pressionar Ctrl+C para encerramento limpo.
-    
-    Registo de Veículos:
-        Veículos são registados estaticamente no construtor do EventDrivenAgent.
-        Para adicionar mais veículos:
-        
-        ```python
-        # Criar novo veículo
-        new_vehicle = Veiculo(
-            jid="vehicle4@localhost",
-            password="vehicle456",
-            max_fuel=100,
-            capacity=1000,
-            max_orders=10,
-            map=world.graph,
-            weight=1500,
-            current_location=initial_location,
-            event_agent_jid=EVENT_AGENT_JID
-        )
-        
-        # Adicionar à lista de registados
-        event_agent = EventDrivenAgent(
-            ...,
-            registered_vehicles=[..., "vehicle4@localhost"],
-            ...
-        )
-        ```
-    
-    Observações de Implementação:
-        - **Min Heap**: Garante processamento em ordem temporal O(log n)
-        - **Agrupamento de Arrivals**: Reduz overhead de comunicação
-        - **Ajuste Temporal**: Evita simulação duplicada do mesmo intervalo
-        - **Listas Separadas**: Transit events geridos independentemente
-        - **Resimulação Automática**: Mantém dados de tráfego actualizados
-    
-    Limitações Conhecidas:
-        - Apenas um evento de cada tempo é processado por ciclo
-        - Eventos futuros na heap são descartados (design intencional)
-        - Requer servidor XMPP local (não suporta servidores remotos)
-        - Não persiste estado entre execuções
-    
-    Extensões Futuras Possíveis:
-        - [ ] Persistência de eventos em base de dados
-        - [ ] Interface web para visualização em tempo real
-        - [ ] Métricas de desempenho e estatísticas
-        - [ ] Suporte para múltiplos event agents (federação)
-        - [ ] Replay de simulações a partir de logs
-        - [ ] Integração com sistemas externos via REST API
-    
-    Troubleshooting:
-        **Problema**: Agentes não se conectam
-        **Solução**: Verificar se servidor XMPP está em execução e contas existem
-        
-        **Problema**: Heap vazia constantemente
-        **Solução**: Verificar se veículos estão a enviar eventos correctamente
-        
-        **Problema**: Eventos não são processados
-        **Solução**: Verificar simulation_interval e presence subscriptions
-        
-        **Problema**: Duplicação de eventos
-        **Solução**: Verificar lógica de agrupamento e ajuste temporal
-    
-    Referências:
-        - SPADE Framework: https://spade-mas.readthedocs.io/
-        - XMPP Protocol: https://xmpp.org/
-        - FIPA ACL: http://www.fipa.org/repository/aclspecs.html
-        - Python heapq: https://docs.python.org/3/library/heapq.html
-    
-    Autores:
-        Equipa de Desenvolvimento Supply Chain Optimization
-    
-    Licença:
-        Consultar ficheiro LICENSE na raiz do projecto
-    
-    Versão:
-        1.0.0 (2025)
-    """
-    
-    asyncio.run(main())
