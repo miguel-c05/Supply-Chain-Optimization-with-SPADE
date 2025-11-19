@@ -7,6 +7,7 @@ from spade.template import Template
 from world.world import World
 import json
 import time
+from logger_utils import MessageLogger
 
 
 class WorldAgent(Agent):

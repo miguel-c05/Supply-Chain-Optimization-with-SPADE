@@ -56,12 +56,14 @@ import random
 import json
 import sys
 import os
+import time
 
 # Add parent directory to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from veiculos.algoritmo_tarefas import A_star_task_algorithm
 from world.graph import Graph
+from logger_utils import MessageLogger, RouteCalculationLogger, VehicleMetricsLogger, OrderLifecycleLogger
 
 
 class Order:
@@ -212,9 +214,29 @@ class Order:
         self.fuel = fuel
         self.sender_location = sender_location
         self.receiver_location = receiver_location
+        
         # Optimize delivery time using A* task algorithm
-        _ , time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
-        self.deliver_time = time
+        start_time = time.time()
+        _ , optimized_time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
+        computation_time_ms = (time.time() - start_time) * 1000
+        
+        self.deliver_time = optimized_time
+        
+        # Log route calculation
+        try:
+            route_logger = RouteCalculationLogger.get_instance()
+            route_logger.log_calculation(
+                vehicle_jid=f"order_{self.orderid}",
+                algorithm="astar",
+                num_orders=1,
+                computation_time_ms=computation_time_ms,
+                route_length=len(path) if path else 0,
+                total_distance=optimized_time,
+                total_fuel=fuel,
+                route_nodes=str(path) if path else "[]"
+            )
+        except Exception as e:
+            pass  # Don't crash on logging errors
 
 class Veiculo(Agent):
     """
@@ -539,6 +561,18 @@ class Veiculo(Agent):
                 proposal_msg.body = json.dumps(proposal_data)
                 await self.send(proposal_msg)
                 
+                # Log message
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.sender),
+                        message_type="vehicle-proposal",
+                        performative="vehicle-proposal",
+                        body=proposal_msg.body
+                    )
+                except Exception:
+                    pass
                 
                 if self.agent.verbose:
                     print(f"[{self.agent.name}] Proposal sent back to {msg.sender} - Order {order.orderid}: can_fit={can_fit}, time={delivery_time}, order route={order.route}")
@@ -1306,6 +1340,18 @@ class Veiculo(Agent):
             }
             msg.body = json.dumps(order_dict)
             await self.send(msg)
+            # Log message
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="vehicle-pickup",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             print(f"[{self.agent.name}] Notified supplier {supplier_jid}: pickup order {order.orderid}")
         
         async def notify_warehouse_start(self, order: Order):
@@ -1340,6 +1386,17 @@ class Veiculo(Agent):
                 }
             msg.body = json.dumps(data)
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="vehicle-pickup",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             print(f"[{self.agent.name}] Notified {order.sender}: order {order.orderid} started")
         
         async def notify_warehouse_complete(self, order: Order):
@@ -1375,6 +1432,17 @@ class Veiculo(Agent):
             }
             msg.body = json.dumps(data)
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="vehicle-delivery",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             print(f"[{self.agent.name}] Notified {order.receiver}: order {order.orderid} completed")
         
         async def notify_event_agent(self, time_left: float, next_node: int):
@@ -1417,6 +1485,17 @@ class Veiculo(Agent):
             }
             msg.body = json.dumps(data)
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="inform",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
         
         async def update_map(self, traffic_data: dict):
             """
@@ -1629,6 +1708,17 @@ class Veiculo(Agent):
                 reply.body = json.dumps(response_data)
                 
                 await self.send(reply)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(reply.to),
+                        message_type="Confirm",
+                        performative="presence-response",
+                        body=reply.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 if self.agent.verbose:
                     print(f"[{self.agent.name}] ✅ Presence response sent to {msg.sender}")
                     print(f"  Status: {presence_show}, Location: {self.agent.current_location}, Active orders: {len(self.agent.orders)}")

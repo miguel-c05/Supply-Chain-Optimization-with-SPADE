@@ -40,6 +40,7 @@ from spade.presence import PresenceShow
 from world.graph import Graph, Edge
 from veiculos.veiculos import Order
 import config
+from logger_utils import MessageLogger, InventoryLogger, OrderLifecycleLogger
 
 class Warehouse(Agent):
     """

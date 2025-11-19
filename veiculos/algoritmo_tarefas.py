@@ -860,12 +860,7 @@ def A_star_task_algorithm(graph: Graph, start:int, tasks:list["Order"],capacity:
         - PriorityQueue uses (f, id(node), node) for tie-breaking by ID
         - order_id=None in root node (initial position without associated task)
         - Search is optimal (finds minimum cost solution) if heuristic is admissible
-    
-    Complexity:
-        - Time: O(b^d) where b is branching factor, d is depth (2*num_tasks)
-        - Space: O(b^d) for storing search tree
-        - Typical branching: 2*num_tasks initially, decreasing as tasks complete
-    
+
     Integration with SPADE Agents:
         While this function itself doesn't use FIPA, it integrates with SPADE agents:
         1. Vehicle agent calls this function to compute optimal route

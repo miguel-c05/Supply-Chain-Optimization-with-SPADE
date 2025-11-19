@@ -63,6 +63,7 @@ from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, PeriodicBehaviour, OneShotBehaviour
 from spade.message import Message
 from spade.presence import PresenceType, PresenceShow
+from logger_utils import MessageLogger
 
 
 class Event:

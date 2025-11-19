@@ -47,6 +47,7 @@ from spade.template import Template
 from spade.presence import PresenceShow, Contact, PresenceInfo
 from world.graph import Graph, Node, Edge
 from veiculos.veiculos import Order
+from logger_utils import MessageLogger, OrderLifecycleLogger
 
 class Supplier(Agent):
     """
