@@ -1252,6 +1252,7 @@ class EventDrivenAgent(Agent):
                 recipients = (self.agent.registered_vehicles + 
                             self.agent.registered_stores
                             ) # TODO + self.agent.registered_warehouses + self.agent.registered_suppliers
+                print(recipients)
                 if self.agent.verbose:
                     print(f"\n[{self.agent.name}] 📢 Notificando evento TRANSIT para {len(recipients)} agentes")
                 

@@ -118,7 +118,7 @@ class Order:
                 f"sender_loc={self.sender_location}, receiver_loc={self.receiver_location}, "
                 f"time={self.deliver_time}, fuel={self.fuel}, started={self.comecou})")
         
-    def time_to_deliver(self,sender_location:int,receiver_location:int ,map: Graph,weight: float):
+    def time_to_deliver(self,sender_location:int,receiver_location:int ,map: Graph,weight: float, current_location:int,capacity:int, max_fuel: int):
         """
         Calcula o tempo de entrega, rota e combustível necessário usando Dijkstra.
         
@@ -152,6 +152,7 @@ class Order:
         """
         #calcula o tempo de entrega baseado no mapa
         path, fuel, time = map.djikstra(int(sender_location), int(receiver_location))
+        _ , time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
         self.route = path
         self.deliver_time = time
         self.fuel = fuel
@@ -391,7 +392,11 @@ class Veiculo(Agent):
                     sender_location=order.sender_location,
                     receiver_location=order.receiver_location,
                     map=self.agent.map,
-                    weight=self.agent.weight
+                    weight=self.agent.weight,
+                    current_location=self.agent.current_location,
+                    capacity=self.agent.capacity,
+                    max_fuel=self.agent.max_fuel
+
                 )
                 
                 # Verificar se consegue encaixar na rota atual
@@ -1122,8 +1127,8 @@ class Veiculo(Agent):
                 "orderid": order.orderid,
                 "vehicle_id": str(self.agent.jid),
                 "status": "started",
-                "location": self.agent.current_location
-            }
+                "location": self.agent.current_location,
+                }
             msg.body = json.dumps(data)
             await self.send(msg)
             print(f"[{self.agent.name}] Notificado {order.sender}: ordem {order.orderid} iniciada")
@@ -1155,7 +1160,8 @@ class Veiculo(Agent):
                 "orderid": order.orderid,
                 "vehicle_id": str(self.agent.jid),
                 "status": "completed",
-                "location": self.agent.current_location
+                "location": self.agent.current_location,
+                "time": order.time          
             }
             msg.body = json.dumps(data)
             await self.send(msg)
