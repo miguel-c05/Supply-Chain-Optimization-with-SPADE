@@ -445,7 +445,7 @@ class EventDrivenAgent(Agent):
         self.add_behaviour(receive_behaviour)
         
         # Behaviour para enviar mensagem sinaleira inicial (periódico até receber arrival)
-        self.initial_signal_behaviour = self.SendInitialSignalBehaviour(period=2.0)  # Envia a cada 2s
+        self.initial_signal_behaviour = self.SendInitialSignalBehaviour(period=10)  # Envia a cada 2s
         self.add_behaviour(self.initial_signal_behaviour)
         
         # Behaviour para registrar o transito
@@ -607,7 +607,7 @@ class EventDrivenAgent(Agent):
                 print(f"  Destinatários: {len(self.agent.registered_vehicles)} veículos")
                 print(f"  Veículo (fictício): {vehicle_name_ficticio}")
                 print(f"  Tipo: arrival")
-                print(f"  Tempo: 0.0")
+                print(f"  Tempo: 0.1")
                 print(f"{'='*70}")
             else:
                 print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL (aguardando arrival real...)")
@@ -620,7 +620,7 @@ class EventDrivenAgent(Agent):
                 data = {
                     "type": "arrival",
                     "vehicle": vehicle_name_ficticio,  # Nome fictício
-                    "time": 0.0
+                    "time": 0.1
                 }
                 msg.body = json.dumps(data)
                 
@@ -1531,7 +1531,8 @@ async def main():
         password=STORE_PASSWORD,
         map=world.graph,
         node_id=store_locations[0],
-        contact_list=[WAREHOUSE_JID]
+        contact_list=[WAREHOUSE_JID],
+        verbose=False
     )
     
     supplier_1= Supplier(

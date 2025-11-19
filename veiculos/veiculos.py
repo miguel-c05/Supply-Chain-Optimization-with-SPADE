@@ -397,13 +397,9 @@ class Veiculo(Agent):
                 # Verificar se consegue encaixar na rota atual
                 can_fit, delivery_time = await self.can_fit_in_current_route(order)
                 
-                # Enviar proposta de volta ao SUPPLIER usando make_reply()
-                proposal_msg = msg.make_reply()
+
+                proposal_msg= Message(to=order.sender)
                 proposal_msg.set_metadata("performative", "vehicle-proposal")
-                # Preservar o request_id da mensagem original
-                request_id = msg.get_metadata("request_id")
-                if request_id:
-                    proposal_msg.set_metadata("request_id", request_id)
                 
                 proposal_data = {
                     "orderid": order.orderid,
@@ -928,7 +924,7 @@ class Veiculo(Agent):
                             self.agent.next_node = self.agent.actual_route[1][0]
                         else:
                             self.agent.next_node = self.agent.actual_route[0][0]
-                else: 
+                elif presence_show == PresenceShow.AWAY: 
                     # Movimento durante o trânsito
                     if self.agent.verbose:
                         print(f"[{self.agent.name}] Movimento durante o trânsito")

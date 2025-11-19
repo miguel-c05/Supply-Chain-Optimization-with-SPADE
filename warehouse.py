@@ -23,13 +23,13 @@ class Warehouse(Agent):
         - Send "warehouse-accept" messages
         - Receive "store-confirm" messages
         - Update stock
-        - Put bought items aside (in self.pending_orders) while they are not transported
+        - Put bought items aside (in self.pending_deliveries) while they are not transported
         
     Usage instructions:
         - For Vehicles:
             - All vehicles must be subscribed in all warehouses and vice-versa
             - To get all all orders from a store_agent, get
-            warehouse_agent.pending_orders[store_agent.jid]
+            warehouse_agent.pending_deliveries[store_agent.jid]
     
     What is missing (TODO):
         - Communicate with Vehicles
@@ -43,7 +43,7 @@ class Warehouse(Agent):
             - keys: products
             - values: quantity
 
-        - self.pending_orders (dict()): Dictionary with order_id as key and Order object as value.
+        - self.pending_deliveries (dict()): Dictionary with order_id as key and Order object as value.
         Use this to retrieve confirmed orders by their ID (useful for Vehicles).
             - keys: order_id (int)
             - values: Order object
@@ -203,8 +203,8 @@ class Warehouse(Agent):
                     # Create Order object from message
                     order = self.agent.message_to_order(msg)
                     
-                    # Add to pending_orders dict with order_id as key
-                    self.agent.pending_orders[order.orderid] = order
+                    # Add to pending_deliveries dict with order_id as key
+                    self.agent.pending_deliveries[order.orderid] = order
                             
                         
                     print(f"{self.agent.jid}> Confirmation received! Stock updated: {product} -= {quantity}")
@@ -372,6 +372,10 @@ class Warehouse(Agent):
                     can_fit = data["can_fit"]
                     time = data["delivery_time"]
                     
+                    # Verificar se a entrada para este order_id existe, se não criar
+                    if int(order_id) not in agent.vehicle_proposals:
+                        agent.vehicle_proposals[int(order_id)] = {}
+                    
                     agent.vehicle_proposals[int(order_id)][sender_jid] = (can_fit, time)
                     print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
   
@@ -403,8 +407,9 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
             
-            order_proposals =  agent.vehicle_proposals[int(self.request_id)]
+            print (f"Vehicle proposals dict: {agent.vehicle_proposals}")
             proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
+            while len(proposals)
             
             print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
             best_vehicle = self.get_best_vehicle(proposals)
@@ -416,7 +421,7 @@ class Warehouse(Agent):
                 msg : Message = Message(to=best_vehicle)
                 msg.set_metadata("performative", "order-confirmation")
                 
-                order : Order = agent.pending_orders[self.request_id]
+                order : Order = agent.pending_deliveries[self.request_id]
                 order_data = {
                     "orderid" : order.orderid,
                     "confirmed" : True
@@ -771,8 +776,8 @@ class Warehouse(Agent):
                 # Handle based on performative
                 if performative == "vehicle-pickup":
                     # Vehicle is picking up an order to deliver to store
-                    if order.orderid in agent.pending_orders:
-                        del agent.pending_orders[order.orderid]
+                    if order.orderid in agent.pending_deliveries:
+                        del agent.pending_deliveries[order.orderid]
                         print(f"{agent.jid}> Vehicle {msg.sender} picked up order {order.orderid} "
                             f"({order.quantity}x{order.product} for {order.sender})")
                     else:
@@ -884,8 +889,8 @@ class Warehouse(Agent):
         print("-"*30)
                 
         print(f"Current {self.jid} PENDING ORDERS:")
-        if self.pending_orders:
-            for order_id, order in self.pending_orders.items():
+        if self.pending_deliveries:
+            for order_id, order in self.pending_deliveries.items():
                 print(f"Order {order_id}: {order.quantity}x{order.product} "
                       f"from {order.sender} to {order.receiver}")
         else:
@@ -922,7 +927,7 @@ class Warehouse(Agent):
         self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
         
         # Initialize critical attributes early to avoid AttributeError
-        self.pending_orders : dict[int, Order] = {} # order_id as key and Order object as value
+        self.pending_deliveries : dict[int, Order] = {} # order_id as key and Order object as value
         self.vehicle_proposals : dict[int, dict[str, tuple[bool]]] = {}
         self.vehicles = []
         self.suppliers = []
@@ -979,6 +984,12 @@ class Warehouse(Agent):
         template.set_metadata("performative", "vehicle-pickup")
         self.add_behaviour(behav, template)
         
+        # Run ReceiveVehicleProposals behaviour
+        vehicle_proposal_behav = self.ReceiveVehicleProposals()
+        vehicle_proposal_template = Template()
+        vehicle_proposal_template.set_metadata("performative", "vehicle-proposal")
+        self.add_behaviour(vehicle_proposal_behav, vehicle_proposal_template)
+
         # Run ReceiveVehicleArrival behaviour for deliveries
         behav = self.ReceiveVehicleArrival()
         template = Template()
@@ -1082,8 +1093,8 @@ async def main():
     await asyncio.sleep(2)
     
     # Check pending orders
-    print(f"\n📦 Pending orders: {len(warehouse.pending_orders)}")
-    for order_id, order in warehouse.pending_orders.items():
+    print(f"\n📦 Pending orders: {len(warehouse.pending_deliveries)}")
+    for order_id, order in warehouse.pending_deliveries.items():
         print(f"  Order {order_id}: {order.quantity}x{order.product} "
               f"to {order.sender} (store location: {order.sender_location})")
     
@@ -1106,7 +1117,7 @@ async def main():
             msg.set_metadata("request_id", "0")
             
             # Body is JSON with order data + can_fit + delivery_time
-            order = warehouse.pending_orders[0]
+            order = warehouse.pending_deliveries[0]
             proposal_data = {
                 "orderid": order.orderid,
                 "product": order.product,
@@ -1136,7 +1147,7 @@ async def main():
             msg.set_metadata("vehicle_id", "vehicle2@localhost")
             msg.set_metadata("request_id", "0")
             
-            order = warehouse.pending_orders[0]
+            order = warehouse.pending_deliveries[0]
             proposal_data = {
                 "orderid": order.orderid,
                 "product": order.product,
@@ -1166,9 +1177,9 @@ async def main():
     class SimulateVehiclePickup(OneShotBehaviour):
         async def run(self):
             await asyncio.sleep(1)
-            if warehouse.pending_orders:
-                order_id = list(warehouse.pending_orders.keys())[0]
-                order = warehouse.pending_orders[order_id]
+            if warehouse.pending_deliveries:
+                order_id = list(warehouse.pending_deliveries.keys())[0]
+                order = warehouse.pending_deliveries[order_id]
                 
                 msg = Message(to=f"warehouse{warehouse_node}@localhost")
                 msg.sender = "vehicle2@localhost"
@@ -1196,8 +1207,8 @@ async def main():
     warehouse.add_behaviour(SimulateVehiclePickup())
     await asyncio.sleep(2)
     
-    print(f"\n📦 Pending orders after pickup: {len(warehouse.pending_orders)}")
-    if not warehouse.pending_orders:
+    print(f"\n📦 Pending orders after pickup: {len(warehouse.pending_deliveries)}")
+    if not warehouse.pending_deliveries:
         print("  ✅ Order successfully picked up!")
     
     print("\n" + "="*60)
@@ -1279,7 +1290,7 @@ async def main():
             await asyncio.sleep(1)
             
             # Vehicle 1: CANNOT FIT
-            order = warehouse.pending_orders[1]
+            order = warehouse.pending_deliveries[1]
             proposal1 = {
                 "orderid": order.orderid,
                 "product": order.product,
@@ -1335,8 +1346,8 @@ async def main():
     print("\n" + "="*60)
     print("📊 FINAL STATE")
     print("="*60)
-    print(f"Pending orders: {len(warehouse.pending_orders)}")
-    for order_id, order in warehouse.pending_orders.items():
+    print(f"Pending orders: {len(warehouse.pending_deliveries)}")
+    for order_id, order in warehouse.pending_deliveries.items():
         print(f"  Order {order_id}: {order.quantity}x{order.product}")
     
     print(f"\nFinal stock:")
