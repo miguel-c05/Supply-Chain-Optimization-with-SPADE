@@ -326,7 +326,6 @@ class WorldAgent(Agent):
             "type": "world_tick_update",
             "tick": self.world.tick_counter,
             "infected_edges": len(self.world.graph.infected_edges),
-            "timestamp": asyncio.get_event_loop().time()
         }
         
         for subscriber in self.subscribers:
