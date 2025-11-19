@@ -240,7 +240,7 @@ class Warehouse(Agent):
         
         def populate_vehicles_from_contacts(self):
             """Populate vehicles list from presence contacts if empty"""
-            agent : Supplier = self.agent
+            agent : Warehouse = self.agent
             
             # Get all vehicles from presence contacts
             vehicles = [str(jid) for jid in agent.presence.contacts.keys() if "vehicle" in str(jid)]
@@ -254,7 +254,7 @@ class Warehouse(Agent):
             return len(vehicles) > 0
         
         def create_presence_info_message(self, to) -> Message:
-            self.agent : Supplier
+            self.agent : Warehouse
             
             msg : Message = Message(to=to)
             msg.set_metadata("performative", "presence-info")
@@ -262,7 +262,7 @@ class Warehouse(Agent):
             return msg
             
         def create_call_for_proposal_message(self, to) -> Message:
-            self.agent : Supplier
+            self.agent : Warehouse
             
             msg : Message = Message(to=to)
             msg.set_metadata("performative", "order-proposal")
@@ -305,11 +305,11 @@ class Warehouse(Agent):
                 msg : Message = self.create_presence_info_message(to=vehicle_jid)
                 await self.send(msg)
                 
-                behav = agent.ReceivePresenceInfo()
+                behav = self.agent.ReceivePresenceInfo()
                 temp : Template = Template()
                 temp.set_metadata("performative", "presence-response")
                 temp.set_metadata("vehicle_id", str(vehicle_jid))
-                agent.add_behaviour(behav, temp)
+                self.agent.add_behaviour(behav, temp)
                 
                 await behav.join()
                 print(f"{agent.jid}> Presence info from {vehicle_jid}: {agent.presence_infos}")
@@ -333,10 +333,8 @@ class Warehouse(Agent):
             
             print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
-            behav = agent.ReceiveVehicleProposals(self.request_id)
-            temp : Template = Template()
-            temp.set_metadata("performative", "vehicle-proposal")
-            agent.add_behaviour(behav, temp)
+            behav = self.agent.ChooseBestVehicle(self.request_id)
+            self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
             await behav.join()
@@ -355,8 +353,33 @@ class Warehouse(Agent):
                 agent.presence_infos[msg.get_metadata("vehicle_id")] = presence_info
             else:
                 print(f"{agent.jid}> No presence info response received from vehicle.")
-                  
-    class ReceiveVehicleProposals(OneShotBehaviour):
+    
+    class ReceiveVehicleProposals(CyclicBehaviour):
+        
+        async def run(self):
+            agent : Warehouse = self.agent
+            
+            while True:
+                msg : Message = await self.receive(timeout=5)
+                
+                if msg:
+                    print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
+                    data = json.loads(msg.body)
+                    
+                    # A proposta do veículo não é uma Order, são apenas dados da proposta
+                    order_id = data["orderid"]
+                    sender_jid = str(msg.sender)
+                    can_fit = data["can_fit"]
+                    time = data["delivery_time"]
+                    
+                    agent.vehicle_proposals[int(order_id)][sender_jid] = (can_fit, time)
+                    print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
+  
+                else: 
+                    print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
+                    break
+                 
+    class ChooseBestVehicle(OneShotBehaviour):
         def __init__(self, request_id):
             super().__init__()
             self.request_id = request_id
@@ -380,40 +403,20 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
             
-            proposals = {}  # vehicle_jid : (can_fit, time)
-            
-            while True:
-                msg : Message = await self.receive(timeout=5)
-                
-                if msg:
-                    print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
-                    data = json.loads(msg.body)
-                    
-                    # A proposta do veículo não é uma Order, são apenas dados da proposta
-                    order_id = data["orderid"]
-                    sender_jid = str(msg.sender)
-                    can_fit = data["can_fit"]
-                    time = data["delivery_time"]
-                    
-                    proposals[sender_jid] = (can_fit, time)
-                    print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
-  
-                else: 
-                    print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
-                    break
+            order_proposals =  agent.vehicle_proposals[int(self.request_id)]
+            proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
             
             print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
             best_vehicle = self.get_best_vehicle(proposals)
             
             if best_vehicle:
-                
                 print(f"{agent.jid}> 🏆 Best vehicle selected: {best_vehicle}")
                 
                 # Send confirmation to the selected vehicle
                 msg : Message = Message(to=best_vehicle)
                 msg.set_metadata("performative", "order-confirmation")
                 
-                order : Order = agent.pending_orders[order_id]
+                order : Order = agent.pending_orders[self.request_id]
                 order_data = {
                     "orderid" : order.orderid,
                     "confirmed" : True
@@ -421,7 +424,7 @@ class Warehouse(Agent):
                 msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
-                print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {order_id}")
+                print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
                 
                 # Send rejection to all other vehicles
                 rejected_vehicles = [jid for jid in proposals.keys() if jid != best_vehicle]
@@ -435,11 +438,7 @@ class Warehouse(Agent):
                     }
                     
                     reject_msg.body = json.dumps(reject_data)
-                    
-                    await self.send(reject_msg)
-                    print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {order_id}")
-            else:
-                print(f"{agent.jid}> ⚠️ No vehicles available to assign!")       
+                           
     
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
@@ -492,7 +491,7 @@ class Warehouse(Agent):
                 agent.current_buy_request = msg
         
                 # Collect responses from all suppliers
-                behav = agent.CollectSupplierResponses(
+                behav = agent.CollectWarehouseResponses(
                     msg, 
                     request_id_for_template, 
                     len(agent.suppliers),
@@ -503,7 +502,7 @@ class Warehouse(Agent):
                 
                 await behav.join()
     
-    class CollectSupplierResponses(OneShotBehaviour):
+    class CollectWarehouseResponses(OneShotBehaviour):
         def __init__(self, msg : Message, request_id : int, num_suppliers : int, quantity : int, product : str):
             super().__init__()
             self.request_id = request_id
@@ -526,7 +525,7 @@ class Warehouse(Agent):
             print(f"{agent.jid}> Setting up to receive supplier responses for request_id={self.request_id}")
             
             # Create a combined behaviour to listen for both
-            combined_behav = agent.ReceiveAllSupplierResponses(
+            combined_behav = agent.ReceiveAllWarehouseResponses(
                 self.request_id,
                 self.num_suppliers,
                 self.acceptances,
@@ -549,7 +548,7 @@ class Warehouse(Agent):
                 
                 for supplier_jid, msg in self.acceptances:
                     score = agent.calculate_supplier_score(msg)
-                    print(f"{agent.jid}> Supplier {supplier_jid} score: {score}")
+                    print(f"{agent.jid}> Warehouse {supplier_jid} score: {score}")
                     
                     if score < best_score:
                         best_score = score
@@ -579,7 +578,7 @@ class Warehouse(Agent):
                 if hasattr(agent, 'current_buy_request') and agent.current_buy_request:
                     agent.failed_requests.put(agent.current_buy_request)
 
-    class ReceiveAllSupplierResponses(OneShotBehaviour):
+    class ReceiveAllWarehouseResponses(OneShotBehaviour):
         def __init__(self, request_id : int, num_suppliers : int, acceptances : list, rejections : list):
             super().__init__()
             self.request_id = request_id
@@ -592,7 +591,7 @@ class Warehouse(Agent):
         async def run(self):
             agent : Warehouse = self.agent
             
-            print(f"{agent.jid}> ReceiveAllSupplierResponses starting - waiting for {self.num_suppliers} responses (request_id={self.request_id})")
+            print(f"{agent.jid}> ReceiveAllWarehouseResponses starting - waiting for {self.num_suppliers} responses (request_id={self.request_id})")
             
             import time
             start_time = time.time()
@@ -715,7 +714,7 @@ class Warehouse(Agent):
 
                     await self.send(msg)
 
-                behav = agent.RecieveSupplierAcceptance(msg)
+                behav = agent.RecieveWarehouseAcceptance(msg)
                 template = Template()
                 template.set_metadata("performative", "supplier-accept")
                 template.set_metadata("warehouse_id", str(agent.jid))
