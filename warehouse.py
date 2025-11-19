@@ -469,8 +469,8 @@ class Warehouse(Agent):
                     "confirmed" : True
                 }
                 msg.body = json.dumps(order_data)
-                
                 await self.send(msg)
+                
                 if agent.verbose:
                     print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
                 
@@ -486,11 +486,12 @@ class Warehouse(Agent):
                     }
                     
                     reject_msg.body = json.dumps(reject_data)
-                           
+                    await self.send(reject_msg)                        
     
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
-    # ------------------------------------------      
+    # ------------------------------------------
+        
     class BuyMaterial(OneShotBehaviour):
         def __init__(self, quantity, product):
             super().__init__()
