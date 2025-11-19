@@ -7,7 +7,7 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, PeriodicBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
-from world.graph import Graph
+from world.graph import Graph, Edge
 from veiculos.veiculos import Order
 import config
 import json
@@ -448,8 +448,15 @@ class Store(Agent):
         msg.set_metadata("store_id", str(self.jid))
         # NOTE: request_id should be set separately by the caller
     
-    def update_graph(self, data : str) -> None:
-        pass # TODO - implement if needed, depending on the structure of Event.data
+    def update_graph(self, traffic_data) -> None:
+        for edge_info in traffic_data.get("edges", []):
+                node1_id = edge_info.get("node1")
+                node2_id = edge_info.get("node2")
+                new_weight = edge_info.get("weight")
+                
+                edge : Edge = self.agent.map.get_edge(node1_id, node2_id)
+                if edge:
+                    edge.weight = new_weight
     
     def get_stats(self, order : Order, state) -> None:
         """
