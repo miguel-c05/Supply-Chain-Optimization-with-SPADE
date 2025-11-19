@@ -874,19 +874,11 @@ class Veiculo(Agent):
                 data = json.loads(msg.body)
                 type = data.get("type")
                 time = data.get("time")
-                veiculo = data.get("vehicle", None)  # Compatibilidade com mensagens antigas
                 veiculos = data.get("vehicles", [])  # Nova lista de veículos
-                
-                # Se não houver lista de veículos mas houver veículo único, usar o antigo formato
-                if not veiculos and veiculo:
-                    veiculos = [veiculo]
-                
-                if self.agent.verbose:
-                    print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
                 
                 # Verificar se este veículo está na lista de veículos
                 is_for_this_vehicle = self.agent.name in veiculos
-                
+                print (f"[{self.agent.name}] is_for_this_vehicle: {is_for_this_vehicle} (veiculos={veiculos})")
                 if type == "arrival" and is_for_this_vehicle:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
@@ -910,9 +902,14 @@ class Veiculo(Agent):
                                 show=PresenceShow.CHAT,
                                 status="Disponível para novas ordens"
                             )
+                            print(f"[{self.agent.name}] Todas as tarefas concluídas. Veículo agora disponível.")
+                            print(f"[{self.agent.name}] Presence atualizada para AVAILABLE {self.agent.presence.get_show()}.")
+                            self.agent.next_node = None
                             if self.agent.verbose:
                                 print(f"[{self.agent.name}] Status alterado para AVAILABLE - sem tarefas")
-                            return
+                            return 
+                            
+                            
                         
                         # Há pending orders - calcular nova rota
                         self.agent.actual_route, _, _ = A_star_task_algorithm(
@@ -956,11 +953,10 @@ class Veiculo(Agent):
                 # NÃO notificar se:
                 # 1. Tempo simulado é 0 E (evento é Transit OU não está na lista de veículos)
                 should_notify = True
-                if time == 0:
-                    if type == "Transit" or not is_for_this_vehicle:
-                        should_notify = False
-                        print(f"[{self.agent.name}] ⚠️  Notificação ignorada (time=0 e tipo={type}, is_for_this_vehicle={is_for_this_vehicle})")
-                
+                if time == 0 and type == "Transit":
+                    should_notify = False
+                    #print(f"[{self.agent.name}] ⚠️  Notificação ignorada (time=0 e tipo={type}, is_for_this_vehicle={is_for_this_vehicle})")
+                print(f"[{self.agent.name}] should_notify: {should_notify}, next_node: {self.agent.next_node}, route: {self.agent.actual_route}")
                 if should_notify and self.agent.next_node:
                     _, _, time_left = self.agent.map.djikstra(
                         self.agent.current_location,

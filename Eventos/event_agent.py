@@ -1575,7 +1575,7 @@ async def main():
         registered_suppliers=[SUPLIER_JID],
         world_agent=WORLD_AGENT_JID,
         world_simulation_time=10.0,
-        verbose=False
+        verbose=True
     )
     
     # Criar world agent com o world já instanciado
