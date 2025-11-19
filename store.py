@@ -359,7 +359,7 @@ class Store(Agent):
                 agent.current_tick += delta
                 
                 if type.lower() != "arrival":
-                    map_updates = data["data"]                   
+                    map_updates = data["data"]                 
                 
                 # TODO -- implement update graph  
                 agent.update_graph(map_updates)         
@@ -577,7 +577,7 @@ class Store(Agent):
         # Time delta behaviour
         time_behav = self.ReceiveTimeDelta()
         time_template : Template = Template()
-        time_template.set_metadata("performative", "time-delta")
+        time_template.set_metadata("performative", "inform")
         self.add_behaviour(time_behav, time_template)
         
         # Buy retrying is not bound by ticks
@@ -590,61 +590,3 @@ class Store(Agent):
         delivery_temp.set_metadata("performative", "vehicle-delivery")
         self.add_behaviour(vehicle_behav, delivery_temp)
 
-
-async def main():
-    store_agent : Store = Store("store@localhost", "pass")
-    
-    
-    await store_agent.start()
-    store_agent.web.start("localhost", "10000")
-    store_agent.presence.subscribe("store@localhost")
-    print("Sent subscription request to store@localhost")
-    
-    store_agent.presence.approve_all = True
-    store_agent.presence.approve_subscription("store@localhost")
-    print(f"Accepted subscription request from store@localhost")
-    
-    
-    behav = store_agent.BuyProduct(3, "A")
-    store_agent.add_behaviour(behav)
-    
-    class SendTestAcceptance(OneShotBehaviour):
-        async def run(self):  
-            # Send test acceptance message
-            test_msg = Message(to="store@localhost")
-            test_msg.sender = "warehouse@localhost"
-            test_msg.set_metadata("performative", "warehouse-accept")
-            test_msg.set_metadata("warehouse_id", "warehouse@localhost")
-            test_msg.set_metadata("store_id", "store@localhost")
-            test_msg.set_metadata("request_id", "0")
-            test_msg.body = "3 A"
-            
-            await self.send(test_msg)
-            print(f"Sent acceptance of request {test_msg.body} with id={test_msg.get_metadata('request_id')}")
-
-    behav = SendTestAcceptance()
-    store_agent.add_behaviour(SendTestAcceptance())
-    await asyncio.sleep(2)
-    
-    print("\n=== Testing Retry Method ===")
-    await asyncio.sleep(3)
-    
-    # Manually add a failed request to the queue for testing
-    failed_msg = Message(to="warehouse@localhost")
-    store_agent.set_buy_metadata(failed_msg)
-    failed_msg.body = "5 B"
-    store_agent.failed_requests.put(failed_msg)
-    print(f"Added failed request to queue: {failed_msg.body}")
-    
-    # Trigger retry behaviour
-    retry_behav = store_agent.RetryPreviousBuy()
-    store_agent.add_behaviour(retry_behav)
-    
-    await asyncio.sleep(2)
-    
-    
-    
-    await spade.wait_until_finished(store_agent)
-    
-if __name__ == "__main__":
-    spade.run(main())
