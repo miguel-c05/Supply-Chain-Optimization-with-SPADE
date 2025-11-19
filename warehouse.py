@@ -170,8 +170,7 @@ class Warehouse(Agent):
             msg.body = f"{self.quant} {self.product} {self.reason}"
             
             await self.send(msg)
-            print(f"{agent.jid}> RejectBuyRequest sent to {self.sender}")
-            
+            print(f"{agent.jid}> RejectBuyRequest sent to {self.sender}")           
     
     class ReceiveConfirmationOrDenial(OneShotBehaviour):
         def __init__(self, accept_msg : Message, sender_jid):

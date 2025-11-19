@@ -270,7 +270,7 @@ class Store(Agent):
             # Don't update stock here - wait for vehicle delivery
             # Stock will be updated when vehicle-delivery message is received
             order : Order = agent.message_to_order(self.msg)
-            agent.pending_orders[order.orderid] = order
+            agent.pending_deliveries[order.orderid] = order
             agent.order_timings[order.orderid] = agent.current_tick
             
             msg = Message(to=self.dest)
@@ -385,7 +385,8 @@ class Store(Agent):
                 try:
                     data = json.loads(msg.body)
                     orderid = data["orderid"]
-                    order = agent.pending_orders[orderid]              
+                    order = agent.pending_deliveries[orderid]
+                    eta = data["time"]          
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
                     return
@@ -398,10 +399,10 @@ class Store(Agent):
                     agent.stock[product] += quantity
                 else:
                     agent.stock[product] = quantity
-                del agent.pending_orders[order.orderid]
+                del agent.pending_deliveries[order.orderid]
                 
                 # Save order stats
-                agent.get_stats(order, "delivered")
+                agent.get_stats(order, eta,"delivered")
                 
                 print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
                 agent.print_stock()    
@@ -477,7 +478,7 @@ class Store(Agent):
                 if edge:
                     edge.weight = new_weight
     
-    def get_stats(self, order : Order, state) -> None:
+    def get_stats(self, order : Order, eta, state) -> None:
         """
         Save stats for the given order to CSV file.
         """
@@ -491,7 +492,7 @@ class Store(Agent):
             "time_to_delivery": self.current_tick - self.order_timings[order.orderid],
             "final_state": state,  # pending, delivered, failed
             "origin_warehouse": order.sender,
-            "expected_to_real_time_offset": self.current_tick - order.deliver_time if order.deliver_time else None,
+            "ETA": eta if eta else None,
             "current_tick": self.current_tick
         }
         
@@ -547,7 +548,7 @@ class Store(Agent):
         # Calculate ID base: Store type code = 1
         self.id_base = (1 * 100_000_000) + (instance_id * 1_000_000)
         
-        self.pending_orders : dict[str, Order] = {}  # key: request_id, value: Order object
+        self.pending_deliveries : dict[str, Order] = {}  # key: request_id, value: Order object
         self.order_timings : dict[str, int] =  {}  # key: request_id, value: ticks at confirmation
         self.current_tick : int = 0
         self.stats_path = os.path.join(os.getcwd(), "stats")
