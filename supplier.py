@@ -540,9 +540,9 @@ class Supplier(Agent):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
-        node : Node = self.map.get_node(node_id)
-        self.pos_x = node.x
-        self.pos_y = node.y
+        node : Node = self.map.get_node(node_id) # TODO -- remove
+        self.pos_x = node.x # TODO -- remove
+        self.pos_y = node.y # TODO -- remove
         self.contact_list = contact_list
         # Extract instance number from JID for ID encoding (e.g., "supplier1@localhost" -> 1)
         jid_name = str(jid).split('@')[0]
