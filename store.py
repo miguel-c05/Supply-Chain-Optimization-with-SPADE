@@ -406,7 +406,7 @@ class Store(Agent):
                 del agent.pending_deliveries[order.orderid]
                 
                 # Save order stats
-                agent.get_stats(order, eta,"delivered")
+                agent.get_stats(order, eta,"delivered", msg.sender)
                 
                 print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
                 agent.print_stock()    
@@ -482,7 +482,7 @@ class Store(Agent):
                 if edge:
                     edge.weight = new_weight
     
-    def get_stats(self, order : Order, eta, state) -> None:
+    def get_stats(self, order : Order, eta, state, vehicle) -> None:
         """
         Save stats for the given order to CSV file.
         """
@@ -490,14 +490,15 @@ class Store(Agent):
         
         order_stats = {
             "order_id": order.orderid,
-            "store_jid": str(self.jid),
+            "store_jid": str(self.jid).split('@')[0],
+            "vehicle_jid" : str(vehicle).split('@')[0],
+            "origin_warehouse": order.sender.split('@')[0],
             "product": order.product,
             "quantity": order.quantity,
-            "time_to_delivery": self.current_tick - self.order_timings[order.orderid],
-            "final_state": state,  # pending, delivered, failed
-            "origin_warehouse": order.sender,
             "ETA": eta if eta else None,
-            "current_tick": self.current_tick
+            "time_to_delivery": self.current_tick - self.order_timings[order.orderid],
+            "current_tick": self.current_tick,
+            "final_state": state  # pending, delivered, failed
         }
         
         # Build full file path
