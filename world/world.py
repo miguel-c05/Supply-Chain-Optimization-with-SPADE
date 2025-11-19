@@ -391,13 +391,13 @@ class World:
                         "node2_id": edge.node2.id,
                         "new_time": edge.weight,
                         "new_fuel_consumption": round(edge.fuel_consumption, 3),
-                        "instant": i
+                        "instant": i*4
                     }
                     events.append(event)
                     # Update the initial state to current state
                     initial_states[edge_key] = edge.weight
 
-            self.plot_graph()
+            #self.plot_graph()
         
         events = [event for event in events if event["instant"] != 0]
         return events
