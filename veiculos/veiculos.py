@@ -871,12 +871,21 @@ class Veiculo(Agent):
                 data = json.loads(msg.body)
                 type = data.get("type")
                 time = data.get("time")
-                veiculo = data.get("vehicle", None)
+                veiculo = data.get("vehicle", None)  # Compatibilidade com mensagens antigas
+                veiculos = data.get("vehicles", [])  # Nova lista de veículos
                 
+                # Se não houver lista de veículos mas houver veículo único, usar o antigo formato
+                if not veiculos and veiculo:
+                    veiculos = [veiculo]
                 if self.agent.verbose:
                     print(f"  Type: {type}, Vehicle: {veiculo}, Agent name: {self.agent.name}")
                 
-                if type == "arrival" and veiculo == self.agent.name:
+                print(f"  Type: {type}, Vehicles: {veiculos}, Agent name: {self.agent.name}")
+                
+                # Verificar se este veículo está na lista de veículos
+                is_for_this_vehicle = self.agent.name in veiculos
+                
+                if type == "arrival" and is_for_this_vehicle:
                     # Chegou a um nó - processar chegada
                     self.agent.current_location, order_id = self.agent.actual_route.pop(0)
                     if not order_id:
@@ -942,7 +951,15 @@ class Veiculo(Agent):
                     await self.update_map(data.get("data"))
                 
                 # Calcular e notificar tempo restante
-                if self.agent.next_node:
+                # NÃO notificar se:
+                # 1. Tempo simulado é 0 E (evento é Transit OU não está na lista de veículos)
+                should_notify = True
+                if time == 0:
+                    if type == "Transit" or not is_for_this_vehicle:
+                        should_notify = False
+                        print(f"[{self.agent.name}] ⚠️  Notificação ignorada (time=0 e tipo={type}, is_for_this_vehicle={is_for_this_vehicle})")
+                
+                if should_notify and self.agent.next_node:
                     _, _, time_left = self.agent.map.djikstra(
                         self.agent.current_location,
                         self.agent.next_node
