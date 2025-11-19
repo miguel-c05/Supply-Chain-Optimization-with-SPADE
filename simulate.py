@@ -199,7 +199,6 @@ async def main():
         traffic_interval=args.world_traffic_interval,
         untraffic_probability=args.world_untraffic_probability
     )
-    
     print(f"✓ Mundo criado: {world.width}x{world.height}")
     print(f"✓ Nós no grafo: {len(world.graph.nodes)}")
     print(f"✓ Arestas no grafo: {len(world.graph.edges)}")

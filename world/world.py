@@ -396,7 +396,7 @@ class World:
                                    width=2, arrows=True)
             
             # Draw edge labels: distance (meters), weight (time cost), fuel consumption (liters)
-            edge_labels = {(u, v): f"{edge.distance}m\\n{edge.weight}s\\n{edge.get_fuel_consumption()}L"}
+            edge_labels = {(u, v): f"{edge.distance}m\n{edge.weight}s\n{edge.get_fuel_consumption()}L"}
             nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, 
                                         label_pos=0.3, font_size=8, 
                                         font_color=color, bbox=dict(boxstyle='round,pad=0.3', 
@@ -651,3 +651,4 @@ class World:
         # Filter out initial events (instant=0) to report only actual changes
         events = [event for event in events if event["instant"] != 0]
         return events
+    

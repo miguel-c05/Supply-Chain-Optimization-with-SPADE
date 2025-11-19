@@ -1,0 +1,1 @@
+timestamp_real,timestamp_sim,vehicle_jid,algorithm,num_orders,computation_time_ms,route_length,total_distance,total_fuel,route_nodes
