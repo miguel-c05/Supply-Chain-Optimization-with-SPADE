@@ -62,7 +62,8 @@ class Store(Agent):
             roll = random.randint(1,100)
             # Decide whether to buy this turn based on probability
             if roll > agent.buy_prob * 100:
-                print(f"{agent.jid}> Decided NOT to buy this turn (roll={roll} > buy_prob={agent.buy_prob})")
+                if agent.verbose:
+                    print(f"{agent.jid}> Decided NOT to buy this turn (roll={roll} > buy_prob={agent.buy_prob})")
                 return
             else: pass
             
@@ -70,6 +71,8 @@ class Store(Agent):
                 self.quantity = random.randint(1, agent.max_buy_quantity)
             if self.product is None:
                 self.product = random.choice(agent.product_list)
+                
+            print(f"{agent.jid}> Preparing to buy {self.quantity} units of {self.product}")
             
             contacts = list(agent.presence.contacts.keys())
             
@@ -86,8 +89,9 @@ class Store(Agent):
                 msg.set_metadata("request_id", str(request_id_for_template))
                 msg.body = f"{self.quantity} {self.product}"
                 
-                print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
-                      f"\"{msg.body}\" to {msg.to}")
+                if agent.verbose:
+                    print(f"{agent.jid}> Sent request (id={msg.get_metadata('request_id')}):"
+                          f"\"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
             
@@ -143,7 +147,8 @@ class Store(Agent):
             
             # Now evaluate and choose best warehouse
             if self.acceptances:
-                print(f"{agent.jid}> Received {len(self.acceptances)} acceptance(s) and {len(self.rejections)} rejection(s)")
+                if agent.verbose:
+                    print(f"{agent.jid}> Received {len(self.acceptances)} acceptance(s) and {len(self.rejections)} rejection(s)")
                 
                 # Calculate scores for each warehouse that accepted
                 best_warehouse = None
@@ -152,7 +157,8 @@ class Store(Agent):
                 
                 for warehouse_jid, msg in self.acceptances:
                     score = agent.calculate_warehouse_score(msg)
-                    print(f"{agent.jid}> Warehouse {warehouse_jid} score: {score}")
+                    if agent.verbose:
+                        print(f"{agent.jid}> Warehouse {warehouse_jid} score: {score}")
                     
                     if score < best_score:
                         best_score = score
@@ -160,7 +166,8 @@ class Store(Agent):
                 
                 if best_warehouse:
                     warehouse_jid, accept_msg = best_warehouse
-                    print(f"{agent.jid}> Selected warehouse {warehouse_jid} with score {best_score}")
+                    if agent.verbose:
+                        print(f"{agent.jid}> Selected warehouse {warehouse_jid} with score {best_score}")
                     
                     # Send confirmation to the chosen warehouse
                     confirm_behav = agent.SendStoreConfirmation(accept_msg)
@@ -173,11 +180,13 @@ class Store(Agent):
                             deny_behav = agent.SendStoreDenial(other_msg)
                             agent.add_behaviour(deny_behav)
                             await deny_behav.join()
-                            print(f"{agent.jid}> Sent denial to {other_warehouse_jid}")
+                            if agent.verbose:
+                                print(f"{agent.jid}> Sent denial to {other_warehouse_jid}")
                     
             else:
-                print(f"{agent.jid}> No acceptances received. All warehouses rejected or timed out.")
-                print(f"{agent.jid}> Request saved in self.failed_requests")
+                if agent.verbose:
+                    print(f"{agent.jid}> No acceptances received. All warehouses rejected or timed out.")
+                    print(f"{agent.jid}> Request saved in self.failed_requests")
                 
                 # Add to failed requests
                 failed_msg = Message(to=agent.current_buy_request.to)
@@ -207,7 +216,8 @@ class Store(Agent):
                 remaining_timeout = self.timeout - elapsed
                 
                 if remaining_timeout <= 0:
-                    print(f"{agent.jid}> Timeout: Only received {self.responses_received}/{self.num_warehouses} responses")
+                    if agent.verbose:
+                        print(f"{agent.jid}> Timeout: Only received {self.responses_received}/{self.num_warehouses} responses")
                     break
                 
                 msg : Message = await self.receive(timeout=remaining_timeout)
@@ -221,7 +231,8 @@ class Store(Agent):
                         quantity = int(parts[0])
                         product = parts[1]
                         
-                        print(f"{agent.jid}> Received acceptance from {warehouse_jid}: {quantity} {product}")
+                        if agent.verbose:
+                            print(f"{agent.jid}> Received acceptance from {warehouse_jid}: {quantity} {product}")
                         self.acceptances.append((warehouse_jid, msg))
                         
                     elif performative == "warehouse-reject":
@@ -230,7 +241,8 @@ class Store(Agent):
                         product = parts[1]
                         reason = parts[2] if len(parts) > 2 else "unknown"
                         
-                        print(f"{agent.jid}> Received rejection from {warehouse_jid}: {quantity} {product} (reason: {reason})")
+                        if agent.verbose:
+                            print(f"{agent.jid}> Received rejection from {warehouse_jid}: {quantity} {product} (reason: {reason})")
                         self.rejections.append((warehouse_jid, msg, reason))
                     
                     self.responses_received += 1
@@ -238,7 +250,8 @@ class Store(Agent):
                     # No more messages, timeout
                     break
             
-            print(f"{agent.jid}> Finished collecting responses: {len(self.acceptances)} accepts, {len(self.rejections)} rejects")
+            if agent.verbose:
+                print(f"{agent.jid}> Finished collecting responses: {len(self.acceptances)} accepts, {len(self.rejections)} rejects")
 
     class SendStoreConfirmation(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -270,7 +283,10 @@ class Store(Agent):
             
             await self.send(msg)
             
-            print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
+            if agent.verbose:
+                print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
+            
+            print(f"{agent.jid}> Successully bought {self.quantity} x{self.product} from {self.dest} under order id {order.orderid}")
 
     class SendStoreDenial(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -294,7 +310,8 @@ class Store(Agent):
             
             await self.send(msg)
             
-            print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
+            if agent.verbose:
+                print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
     
     class RetryPreviousBuy(PeriodicBehaviour):
         async def run(self):
@@ -317,8 +334,9 @@ class Store(Agent):
                     msg.set_metadata("request_id", str(request_id))
                     msg.body = request.body
 
-                    print(f"{self.agent.jid}> Retrying request (id={request_id}):"
-                          f"\"{msg.body}\" to {msg.to}")
+                    if agent.verbose:
+                        print(f"{self.agent.jid}> Retrying request (id={request_id}):"
+                              f"\"{msg.body}\" to {msg.to}")
 
                     await self.send(msg)
 
@@ -490,7 +508,8 @@ class Store(Agent):
                 
                 writer.writerow(order_stats)
             
-            print(f"{self.jid}> Stats saved to {self.stats_path} for order {order.orderid}")
+            if self.verbose:
+                print(f"{self.jid}> Stats saved to {self.stats_path} for order {order.orderid}")
         except Exception as e:
             print(f"{self.jid}> ERROR saving stats: {e}")     
     
@@ -504,11 +523,12 @@ class Store(Agent):
                 print(f"  - {product}: {quantity} units")
     # ------------------------------------------
     
-    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False,contact_list = []):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False, contact_list = [], verbose = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
         self.contact_list = contact_list
+        self.verbose = verbose
         
         # Extract instance number from JID for ID encoding (e.g., "store1@localhost" -> 1)
         jid_name = str(jid).split('@')[0]
@@ -531,7 +551,8 @@ class Store(Agent):
         self.presence.approve_all = True
         for contact in self.contact_list:
             self.presence.subscribe(contact)
-            print(f"{self.jid}> Sent subscription request to {contact}")
+            if self.verbose:
+                print(f"{self.jid}> Sent subscription request to {contact}")
         self.stock = {}
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()
