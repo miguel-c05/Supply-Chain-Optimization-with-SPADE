@@ -299,6 +299,7 @@ class Warehouse(Agent):
             # Enviar mensagens de proposal a todos os veículos
             # Não verificamos presença - deixamos cada veículo decidir se pode aceitar
             n_available_vehicles = 0
+            n_sent_messages = 0
             away_vehicles = []
             for vehicle_jid in agent.vehicles:
                 
@@ -329,11 +330,13 @@ class Warehouse(Agent):
                 for vehicle_jid in away_vehicles:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
+                    
+                    n_sent_messages += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
             
-            print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
+            print(f"{agent.jid}> 📨 Sent proposals to {n_sent_messages} vehicle(s)")
                     
-            behav = self.agent.ChooseBestVehicle(self.request_id)
+            behav = self.agent.ChooseBestVehicle(self.request_id, n_sent_messages)
             self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
@@ -384,9 +387,10 @@ class Warehouse(Agent):
                     break
                  
     class ChooseBestVehicle(OneShotBehaviour):
-        def __init__(self, request_id):
+        def __init__(self, request_id, n_sent_messages):
             super().__init__()
             self.request_id = request_id
+            self.n_sent_messages = n_sent_messages
         
         def get_best_vehicle(self, proposals : dict) -> str:
             # First filter vehicles that can fit the order
@@ -407,9 +411,15 @@ class Warehouse(Agent):
             agent : Warehouse = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
             
-            print (f"Vehicle proposals dict: {agent.vehicle_proposals}")
             proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
-            while len(proposals)
+            
+            while len(proposals) < self.n_sent_messages:
+                print(f"{agent.jid}> Waiting for more proposals... "
+                      f"({len(proposals)}/{self.n_sent_messages})")
+                await asyncio.sleep(1)
+                proposals = agent.vehicle_proposals[int(self.request_id)]
+            
+
             
             print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
             best_vehicle = self.get_best_vehicle(proposals)
