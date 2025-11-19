@@ -47,7 +47,8 @@ class Supplier(Agent):
         async def run(self):
             agent : Supplier = self.agent
         
-            print("Awaiting buy request from warehouses...")
+            if agent.verbose:
+                print("Awaiting buy request from warehouses...")
             msg = await self.receive(timeout=20)
             if msg != None:
                 """
@@ -62,11 +63,11 @@ class Supplier(Agent):
                 request = msg.body.split(" ")
                 quant = int(request[0])
                 product = request[1]
-                print(f"{agent.jid}> Got a request from {msg.sender}: id={request_id} quant={quant} product={product}")
+                # Essential print - request received
+                print(f"{agent.jid}> Request {request_id}: {quant} x{product} from {msg.sender} received.")
                 
                 # Supplier has infinite stock - always accept
                 accept_behav = agent.AcceptBuyRequest(msg)
-                print(f"{agent.jid}> Accepting request for {quant} of {product} (infinite stock available)")
                 
                 # Track total supplied (no need to lock since infinite)
                 if product in agent.total_supplied:
@@ -74,12 +75,14 @@ class Supplier(Agent):
                 else:
                     agent.total_supplied[product] = quant
 
-                print(f"Total {product} supplied: {agent.total_supplied[product]}")
-                agent.print_stats()
+                if agent.verbose:
+                    print(f"Total {product} supplied: {agent.total_supplied[product]}")
+                    agent.print_stats()
                 
                 agent.add_behaviour(accept_behav)
             else:
-                print(f"{agent.jid}> Did not get any buy requests in 20 seconds.")
+                if agent.verbose:
+                    print(f"{agent.jid}> Did not get any buy requests in 20 seconds.")
 
     class AcceptBuyRequest(OneShotBehaviour):
         def __init__(self, msg : Message):
@@ -93,12 +96,13 @@ class Supplier(Agent):
         async def run(self):
             agent : Supplier = self.agent
             
-            print(
-                f"{agent.jid}> Accepted a request from {self.sender}: "
-                f"id={self.request_id} "
-                f"quant={self.quant} "
-                f"product={self.product}"
-            )
+            if agent.verbose:
+                print(
+                    f"{agent.jid}> Accepted a request from {self.sender}: "
+                    f"id={self.request_id} "
+                    f"quant={self.quant} "
+                    f"product={self.product}"
+                )
             
             
             msg = Message(to=self.sender)
@@ -109,11 +113,13 @@ class Supplier(Agent):
             msg.set_metadata("request_id", str(self.request_id))
             msg.body = f"{self.quant} {self.product}"
             
-            print(f"{agent.jid}> Sending supplier-accept message to {self.sender}")
-            print(f"{agent.jid}> Message metadata: warehouse_id={self.sender}, request_id={self.request_id}")
+            if agent.verbose:
+                print(f"{agent.jid}> Sending supplier-accept message to {self.sender}")
+                print(f"{agent.jid}> Message metadata: warehouse_id={self.sender}, request_id={self.request_id}")
             
             await self.send(msg)
-            print(f"{agent.jid}> Message sent successfully!")
+            if agent.verbose:
+                print(f"{agent.jid}> Message sent successfully!")
             
             # Wait for either confirmation or denial
             confirm_deny_behav = agent.ReceiveConfirmationOrDenial(msg, self.sender)
@@ -125,7 +131,8 @@ class Supplier(Agent):
             template.set_metadata("request_id", str(self.request_id))
             
             agent.add_behaviour(confirm_deny_behav, template)
-            print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation or denial...")
+            if agent.verbose:
+                print(f"{agent.jid}> AcceptBuyRequest finished, now waiting for confirmation or denial...")
             
             # Aguardar a confirmação ser recebida antes de terminar
             # await confirm_deny_behav.join()
@@ -141,7 +148,8 @@ class Supplier(Agent):
             self.sender_jid = str(sender_jid)
         
         async def run(self):
-            print(f"{self.agent.jid}> Waiting for warehouse confirmation or denial...")
+            if self.agent.verbose:
+                print(f"{self.agent.jid}> Waiting for warehouse confirmation or denial...")
             msg : Message = await self.receive(timeout=10)
             
             if msg != None:
@@ -159,29 +167,29 @@ class Supplier(Agent):
                     order : Order = self.agent.message_to_order(msg)
                     self.agent.pending_deliveries[order.orderid] = order
                             
-                        
-                    print(f"{self.agent.jid}> Confirmation received! Delivery scheduled: {product}x{quantity}")
-                    print(f"{self.agent.jid}> ReceiveConfirmationOrDenial finished.")
+                    # Essential print - order confirmed
+                    print(f"{self.agent.jid}> Order {order.orderid} confirmed: {quantity} x{product} for {order.sender}")
 
                     behav = self.agent.AssignVehicle(order.orderid)
                     self.agent.add_behaviour(behav)
                     
-                    self.agent.print_stats()
+                    if self.agent.verbose:
+                        self.agent.print_stats()
                     
                 elif performative == "warehouse-deny":
                     # Warehouse denied (chose another supplier) - just log it
-                    print(f"{self.agent.jid}> Denial received! Warehouse chose another supplier.")
-                    print(f"{self.agent.jid}> Order not confirmed for {product} x{quantity}")
-                    
-                    self.agent.print_stats()
+                    if self.agent.verbose:
+                        print(f"{self.agent.jid}> Denial received! Warehouse chose another supplier.")
+                        print(f"{self.agent.jid}> Order not confirmed for {product} x{quantity}")
+                        self.agent.print_stats()
                     
             else:
-                print(f"{self.agent.jid}> Timeout: No confirmation or denial received in 10 seconds.")
-                # Since supplier has infinite stock, no need to rollback
-                # Just log that order wasn't confirmed
-                print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
-                
-                self.agent.print_stats()
+                if self.agent.verbose:
+                    print(f"{self.agent.jid}> Timeout: No confirmation or denial received in 10 seconds.")
+                    # Since supplier has infinite stock, no need to rollback
+                    # Just log that order wasn't confirmed
+                    print(f"{self.agent.jid}> Order not confirmed for {self.accepted_product} x{self.accepted_quantity}")
+                    self.agent.print_stats()
     
     class ReceiveVehicleArrival(CyclicBehaviour):
         def add_metadata(self, r_msg: Message, order : Order) -> Message:
@@ -216,13 +224,12 @@ class Supplier(Agent):
                     print(f"{agent.jid}> Vehicle {msg.sender} picked up order {order.orderid} "
                         f"({order.quantity}x{order.product} for {order.sender})")
                     
-                    # TODO - send message to vehicle
                     msg : Message = Message(to=msg.sender)
                     msg = self.add_metadata(msg, order)
                     await self.send(msg)
                     
                 else:
-                    print(f"{agent.jid}> Order {order.orderid} not found in pending orders!")
+                    print(f"{agent.jid}> ERROR: Order {order.orderid} not found in pending orders!")
                 
     
     class AssignVehicle(OneShotBehaviour):
@@ -239,9 +246,11 @@ class Supplier(Agent):
             
             if vehicles:
                 agent.vehicles = vehicles
-                print(f"{agent.jid}> 🔍 Discovered {len(vehicles)} vehicle(s) from presence: {vehicles}")
+                if agent.verbose:
+                    print(f"{agent.jid}> 🔍 Discovered {len(vehicles)} vehicle(s) from presence: {vehicles}")
             else:
-                print(f"{agent.jid}> ⚠️ No vehicles found in presence contacts yet!")
+                if agent.verbose:
+                    print(f"{agent.jid}> ⚠️ No vehicles found in presence contacts yet!")
             
             return len(vehicles) > 0
         
@@ -285,8 +294,9 @@ class Supplier(Agent):
                 print(f"{agent.jid}> Make sure vehicles are started and have subscribed to this supplier.")
                 return
             
-            print(f"{agent.jid}> 📤 Requesting vehicle proposals...")
-            print(f"{agent.jid}> Vehicles to contact: {agent.vehicles}")
+            if agent.verbose:
+                print(f"{agent.jid}> 📤 Requesting vehicle proposals...")
+                print(f"{agent.jid}> Vehicles to contact: {agent.vehicles}")
             
             # Enviar mensagens de proposal a todos os veículos
             # Não verificamos presença - deixamos cada veículo decidir se pode aceitar
@@ -304,7 +314,8 @@ class Supplier(Agent):
                 self.agent.add_behaviour(behav, temp)
                 
                 await behav.join()
-                print(f"{agent.jid}> Presence info from {vehicle_jid}: {agent.presence_infos}")
+                if agent.verbose:
+                    print(f"{agent.jid}> Presence info from {vehicle_jid}: {agent.presence_infos}")
                 
                 if agent.presence_infos[vehicle_jid] == "PresenceShow.CHAT":
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
@@ -314,16 +325,19 @@ class Supplier(Agent):
                 
                 elif agent.presence_infos[vehicle_jid] == "PresenceShow.AWAY" and n_available_vehicles == 0:
                     away_vehicles.append(vehicle_jid)
-                    print(f"{agent.jid}> ⚠️ Vehicle {vehicle_jid} is away.")
+                    if agent.verbose:
+                        print(f"{agent.jid}> ⚠️ Vehicle {vehicle_jid} is away.")
                     
             if n_available_vehicles == 0:
-                print(f"{agent.jid}> ⚠️ No AVAILABLE vehicles found. All vehicles are AWAY.")
+                if agent.verbose:
+                    print(f"{agent.jid}> ⚠️ No AVAILABLE vehicles found. All vehicles are AWAY.")
                 for vehicle_jid in away_vehicles:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
             
-            print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
+            if agent.verbose:
+                print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
             behav = self.agent.ChooseBestVehicle(self.request_id)
             self.agent.add_behaviour(behav, temp)
@@ -340,11 +354,13 @@ class Supplier(Agent):
             if msg:
                 data = json.loads(msg.body)
                 presence_info = data["presence_show"]
-                print(f"{agent.jid}> Received presence info response from {msg.sender}:"
-                      f"{presence_info}")
+                if agent.verbose:
+                    print(f"{agent.jid}> Received presence info response from {msg.sender}:"
+                          f"{presence_info}")
                 agent.presence_infos[msg.get_metadata("vehicle_id")] = presence_info
             else:
-                print(f"{agent.jid}> No presence info response received from vehicle.")
+                if agent.verbose:
+                    print(f"{agent.jid}> No presence info response received from vehicle.")
     
     class ReceiveVehicleProposals(CyclicBehaviour):
         
@@ -355,7 +371,8 @@ class Supplier(Agent):
                 msg : Message = await self.receive(timeout=5)
                 
                 if msg:
-                    print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
+                    if agent.verbose:
+                        print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
                     data = json.loads(msg.body)
                     
                     # A proposta do veículo não é uma Order, são apenas dados da proposta
@@ -369,10 +386,12 @@ class Supplier(Agent):
                         agent.vehicle_proposals[int(order_id)] = {}
                     
                     agent.vehicle_proposals[int(order_id)][sender_jid] = (can_fit, time)
-                    print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
+                    if agent.verbose:
+                        print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
   
                 else: 
-                    print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
+                    if agent.verbose:
+                        print(f"{agent.jid}> ⏱️ Timeout - no more proposals received")
                     break
                  
     class ChooseBestVehicle(OneShotBehaviour):
@@ -397,7 +416,8 @@ class Supplier(Agent):
         
         async def run(self):
             agent : Supplier = self.agent
-            print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
+            if agent.verbose:
+                print(f"{agent.jid}> 📤 Comparing vehicle proposals...")
             
             # Verificar se a entrada para este order_id existe, se não criar
             if int(self.request_id) not in agent.vehicle_proposals:
@@ -406,11 +426,13 @@ class Supplier(Agent):
             order_proposals =  agent.vehicle_proposals[int(self.request_id)]
             proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
             
-            print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
+            if agent.verbose:
+                print(f"{agent.jid}> 📊 Total proposals received: {len(proposals)}")
             best_vehicle = self.get_best_vehicle(proposals)
             
             if best_vehicle:
-                print(f"{agent.jid}> 🏆 Best vehicle selected: {best_vehicle}")
+                # Essential print - vehicle assigned
+                print(f"{agent.jid}> Vehicle assigned: {best_vehicle} for order {self.request_id}")
                 
                 # Send confirmation to the selected vehicle
                 msg : Message = Message(to=best_vehicle)
@@ -424,7 +446,8 @@ class Supplier(Agent):
                 msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
-                print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
+                if agent.verbose:
+                    print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
                 
                 # Send rejection to all other vehicles
                 rejected_vehicles = [jid for jid in proposals.keys() if jid != best_vehicle]
@@ -440,7 +463,8 @@ class Supplier(Agent):
                     reject_msg.body = json.dumps(reject_data)
                     
                     await self.send(reject_msg)
-                    print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {self.request_id}")
+                    if agent.verbose:
+                        print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {self.request_id}")
             else:
                 print(f"{agent.jid}> ⚠️ No vehicles available to assign!")
     
@@ -541,7 +565,7 @@ class Supplier(Agent):
     
     # ------------------------------------------
     
-    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False, contact_list = []):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False, contact_list = [], verbose = False):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
@@ -549,6 +573,7 @@ class Supplier(Agent):
         self.pos_x = node.x # TODO -- remove
         self.pos_y = node.y # TODO -- remove
         self.contact_list = contact_list
+        self.verbose = verbose
         # Extract instance number from JID for ID encoding (e.g., "supplier1@localhost" -> 1)
         jid_name = str(jid).split('@')[0]
         instance_id = int(''.join(filter(str.isdigit, jid_name)))
@@ -561,8 +586,10 @@ class Supplier(Agent):
         
         for contact in self.contact_list:
             self.presence.subscribe(contact)
-            print(f"{self.jid}> Sent subscription request to {contact}")
-        print(f"{self.jid}> Supplier setup complete. Will auto-accept all presence subscriptions.")
+            if self.verbose:
+                print(f"{self.jid}> Sent subscription request to {contact}")
+        if self.verbose:
+            print(f"{self.jid}> Supplier setup complete. Will auto-accept all presence subscriptions.")
         
         # Supplier has infinite stock - no need to track stock levels
         # Just track what's been supplied
@@ -576,7 +603,8 @@ class Supplier(Agent):
         self.vehicles = []
         self.presence_infos : dict[str, str] = {}
         print(f"{self.jid}> Supplier initialized with INFINITE stock")
-        self.print_stats()
+        if self.verbose:
+            self.print_stats()
         
         # Add behaviour to receive buy requests from warehouses
         behav = self.ReceiveBuyRequest()
