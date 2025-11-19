@@ -240,7 +240,7 @@ class Warehouse(Agent):
         
         def populate_vehicles_from_contacts(self):
             """Populate vehicles list from presence contacts if empty"""
-            agent : Warehouse = self.agent
+            agent : Supplier = self.agent
             
             # Get all vehicles from presence contacts
             vehicles = [str(jid) for jid in agent.presence.contacts.keys() if "vehicle" in str(jid)]
@@ -254,7 +254,7 @@ class Warehouse(Agent):
             return len(vehicles) > 0
         
         def create_presence_info_message(self, to) -> Message:
-            self.agent : Warehouse
+            self.agent : Supplier
             
             msg : Message = Message(to=to)
             msg.set_metadata("performative", "presence-info")
@@ -262,12 +262,12 @@ class Warehouse(Agent):
             return msg
             
         def create_call_for_proposal_message(self, to) -> Message:
-            self.agent : Warehouse
+            self.agent : Supplier
             
             msg : Message = Message(to=to)
             msg.set_metadata("performative", "order-proposal")
             
-            order : Order = self.agent.pending_orders[self.request_id]
+            order = self.agent.pending_deliveries[self.request_id]
 
             new_body = {
                 "orderid" : self.request_id,
@@ -305,11 +305,11 @@ class Warehouse(Agent):
                 msg : Message = self.create_presence_info_message(to=vehicle_jid)
                 await self.send(msg)
                 
-                behav = self.agent.ReceivePresenceInfo()
+                behav = agent.ReceivePresenceInfo()
                 temp : Template = Template()
                 temp.set_metadata("performative", "presence-response")
                 temp.set_metadata("vehicle_id", str(vehicle_jid))
-                self.agent.add_behaviour(behav, temp)
+                agent.add_behaviour(behav, temp)
                 
                 await behav.join()
                 print(f"{agent.jid}> Presence info from {vehicle_jid}: {agent.presence_infos}")
@@ -333,10 +333,10 @@ class Warehouse(Agent):
             
             print(f"{agent.jid}> 📨 Sent proposals to {n_available_vehicles} vehicle(s)")
                     
-            behav = self.agent.ReceiveVehicleProposals(self.request_id)
+            behav = agent.ReceiveVehicleProposals(self.request_id)
             temp : Template = Template()
             temp.set_metadata("performative", "vehicle-proposal")
-            self.agent.add_behaviour(behav, temp)
+            agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
             await behav.join()
@@ -383,7 +383,7 @@ class Warehouse(Agent):
             proposals = {}  # vehicle_jid : (can_fit, time)
             
             while True:
-                msg : Message = await self.receive(timeout=10)
+                msg : Message = await self.receive(timeout=5)
                 
                 if msg:
                     print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
@@ -406,6 +406,7 @@ class Warehouse(Agent):
             best_vehicle = self.get_best_vehicle(proposals)
             
             if best_vehicle:
+                
                 print(f"{agent.jid}> 🏆 Best vehicle selected: {best_vehicle}")
                 
                 # Send confirmation to the selected vehicle
@@ -438,7 +439,7 @@ class Warehouse(Agent):
                     await self.send(reject_msg)
                     print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {order_id}")
             else:
-                print(f"{agent.jid}> ⚠️ No vehicles available to assign!")        
+                print(f"{agent.jid}> ⚠️ No vehicles available to assign!")       
     
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
@@ -793,7 +794,7 @@ class Warehouse(Agent):
     
     class ReceiveTimeDelta(CyclicBehaviour):
         async def run(self):
-            agent : Store = self.agent
+            agent : Warehouse = self.agent
             
             msg : Message = await self.receive(timeout=20)
             
@@ -923,6 +924,7 @@ class Warehouse(Agent):
         
         # Initialize critical attributes early to avoid AttributeError
         self.pending_orders : dict[int, Order] = {} # order_id as key and Order object as value
+        self.vehicle_proposals : dict[int, dict[str, tuple[bool]]] = {}
         self.vehicles = []
         self.suppliers = []
         self.request_counter : int = 0
