@@ -495,12 +495,21 @@ class Store(Agent):
             "current_tick": self.current_tick
         }
         
+        # Build full file path
+        full_path = os.path.join(self.stats_path, self.stats_filename)
+        
         # Check if file exists to determine if we need to write headers
-        file_exists = os.path.isfile(self.stats_path)
+        file_exists = os.path.isfile(full_path)
         
         # Write to CSV
         try:
-            with open(self.stats_path, mode='a', newline='', encoding='utf-8') as f:
+            # Create directory if it doesn't exist
+            os.makedirs(self.stats_path, exist_ok=True)
+            
+            if not file_exists: open_mode = 'w'
+            else: open_mode = 'a'
+            
+            with open(full_path, mode=open_mode, newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=order_stats.keys())
                 
                 # Write header only if file is new
@@ -510,9 +519,9 @@ class Store(Agent):
                 writer.writerow(order_stats)
             
             if self.verbose:
-                print(f"{self.jid}> Stats saved to {self.stats_path} for order {order.orderid}")
+                print(f"{self.jid}> Stats saved to {full_path} for order {order.orderid}")
         except Exception as e:
-            print(f"{self.jid}> ERROR saving stats: {e}")     
+            print(f"{self.jid}> ERROR saving stats: {e}")        
     
     def print_stock(self) -> None:
         """Print the current stock inventory."""
@@ -541,7 +550,8 @@ class Store(Agent):
         self.pending_orders : dict[str, Order] = {}  # key: request_id, value: Order object
         self.order_timings : dict[str, int] =  {}  # key: request_id, value: ticks at confirmation
         self.current_tick : int = 0
-        self.stats_path = os.path.join(os.getcwd(), "stats", "store_stats.csv")
+        self.stats_path = os.path.join(os.getcwd(), "stats")
+        self.stats_filename = "store_stats.csv"
         
         # Constants from config
         self.product_list = config.PRODUCTS
