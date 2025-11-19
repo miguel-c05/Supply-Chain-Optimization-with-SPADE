@@ -1038,6 +1038,9 @@ class EventDrivenAgent(Agent):
             
             self.agent.processed_count += len(events_to_process)
             
+            # Atualizar tempo total simulado (soma acumulada de todos os tempos processados)
+            self.agent.time_simulated += event_time
+            
             # Se foi o último evento de trânsito, solicitar nova simulação
             if was_last_transit_event and self.agent.world_agent:
                 if self.agent.verbose:
@@ -1411,6 +1414,7 @@ async def main():
     from supplier import Supplier
     from store import Store
     from warehouse import Warehouse
+    from Eventos.gui_visualizer import start_gui
     # Configurações dos agentes
     EVENT_AGENT_JID = "event_agent@localhost"
     EVENT_AGENT_PASSWORD = "event123"
@@ -1436,7 +1440,7 @@ async def main():
     VEHICLE_PASSWORD_3 = "vehicle345"
     
     print("="*70)
-    print("TESTE DO EVENT-DRIVEN AGENT COM WORLD AGENT")
+    print("TESTE DO EVENT-DRIVEN AGENT COM WORLD AGENT E GUI")
     print("="*70)
     
     # Criar o mundo
@@ -1632,11 +1636,22 @@ async def main():
     await event_agent.start(auto_register=True)
     print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
 
-    
+    # Iniciar GUI Visualizer
+    print(f"\n🖥️ Iniciando GUI Visualizer...")
+    gui_thread = start_gui(
+        world=world,
+        event_agent=event_agent,
+        vehicles=[vehicle, vehicle_2, vehicle_3],
+        warehouses=[warehouse_1],
+        stores=[store_1],
+        suppliers=[supplier_1]
+    )
+    print(f"✓ GUI iniciada em thread separada")
     
     print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
     print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
     print(f"[SISTEMA] 🚦 Event Agent solicitando simulação de tráfego ao World Agent")
+    print(f"[SISTEMA] 🖥️ GUI disponível para visualização em tempo real")
     print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
     print(f"[SISTEMA] ⌨️  Pressione Ctrl+C para parar\n")
     
