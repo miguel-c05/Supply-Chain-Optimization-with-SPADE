@@ -360,9 +360,8 @@ class Store(Agent):
                 
                 if type.lower() != "arrival":
                     map_updates = data["data"]                 
-                
-                # TODO -- implement update graph  
-                agent.update_graph(map_updates)         
+                    # TODO -- implement update graph  
+                    agent.update_graph(map_updates)         
     
     class ReceiveVehicleArrival(CyclicBehaviour):
         """
