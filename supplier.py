@@ -402,6 +402,18 @@ class Supplier(Agent):
                 print(f"{agent.jid}> Message metadata: warehouse_id={self.sender}, request_id={self.request_id}")
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="supplier-accept",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
+
             if agent.verbose:
                 print(f"{agent.jid}> Message sent successfully!")
             
@@ -608,6 +620,17 @@ class Supplier(Agent):
                     msg : Message = Message(to=msg.sender)
                     msg = self.add_metadata(msg, order)
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Notify",
+                            performative="pickup-confirm",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     
                 else:
                     print(f"{agent.jid}> ERROR: Order {order.orderid} not found in pending orders!")
@@ -800,6 +823,17 @@ class Supplier(Agent):
                 
                 msg : Message = self.create_presence_info_message(to=vehicle_jid)
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Request",
+                        performative="presence-info",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 
                 behav = self.agent.ReceivePresenceInfo()
                 temp : Template = Template()
@@ -814,6 +848,17 @@ class Supplier(Agent):
                 if agent.presence_infos[vehicle_jid] == "PresenceShow.CHAT":
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="order-proposal",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     n_available_vehicles += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
                 
@@ -828,6 +873,17 @@ class Supplier(Agent):
                 for vehicle_jid in away_vehicles:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="order-proposal",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
             
             if agent.verbose:
@@ -1126,6 +1182,17 @@ class Supplier(Agent):
                 msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Notify",
+                        performative="order-confirmation",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 if agent.verbose:
                     print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
                 
@@ -1143,6 +1210,17 @@ class Supplier(Agent):
                     reject_msg.body = json.dumps(reject_data)
                     
                     await self.send(reject_msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(reject_msg.to),
+                            message_type="Confirmation",
+                            performative="order-confirmation",
+                            body=reject_msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     if agent.verbose:
                         print(f"{agent.jid}> ❌ Rejection sent to {vehicle_jid} for order {self.request_id}")
             else:

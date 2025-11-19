@@ -264,7 +264,25 @@ class Warehouse(Agent):
                     accept_behav = agent.AcceptBuyRequest(msg)
                     if agent.verbose:
                         print(f"{self.agent.jid}> Locking {quant} of {product}...")
+                    
+                    # Log inventory change - stock locking
+                    stock_before = agent.stock[product]
                     agent.stock[product] -= quant
+                    
+                    try:
+                        inventory_logger = InventoryLogger.get_instance()
+                        inventory_logger.log_inventory_change(
+                            agent_jid=str(agent.jid),
+                            agent_type="warehouse",
+                            product=product,
+                            change_type="lock",
+                            quantity=quant,
+                            stock_before=stock_before,
+                            stock_after=agent.stock[product],
+                            timestamp_sim=agent.current_tick
+                        )
+                    except Exception:
+                        pass
                     
                     if product in agent.locked_stock:
                         agent.locked_stock[product] += quant
@@ -440,7 +458,17 @@ class Warehouse(Agent):
             msg.body = f"{self.quant} {self.product}"
             
             await self.send(msg)
-            
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="warehouse-accept",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             # Wait for either confirmation or denial
             confirm_deny_behav = agent.ReceiveConfirmationOrDenial(msg, self.sender)
             
@@ -569,6 +597,17 @@ class Warehouse(Agent):
             msg.body = f"{self.quant} {self.product} {self.reason}"
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="warehouse-reject",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             if agent.verbose:
                 print(f"{agent.jid}> RejectBuyRequest sent to {self.sender}")           
     
@@ -707,7 +746,24 @@ class Warehouse(Agent):
                         print(f"{self.agent.jid}> Unlocking stock: {product} += {quantity}")
                     
                     self.agent.locked_stock[product] -= quantity
+                    stock_before = self.agent.stock[product]
                     self.agent.stock[product] += quantity
+                    
+                    # Log inventory change - stock unlock (denied)
+                    try:
+                        inventory_logger = InventoryLogger.get_instance()
+                        inventory_logger.log_inventory_change(
+                            agent_jid=str(self.agent.jid),
+                            agent_type="warehouse",
+                            product=product,
+                            change_type="unlock_denied",
+                            quantity=quantity,
+                            stock_before=stock_before,
+                            stock_after=self.agent.stock[product],
+                            timestamp_sim=self.agent.current_tick
+                        )
+                    except Exception:
+                        pass
                     
                     if self.agent.verbose:
                         self.agent.print_stock()
@@ -716,7 +772,24 @@ class Warehouse(Agent):
                 if self.agent.verbose:
                     print(f"{self.agent.jid}> Timeout: No confirmation or denial received in 10 seconds. Unlocking stock...")
                 self.agent.locked_stock[self.accepted_product] -= self.accepted_quantity
+                stock_before = self.agent.stock[self.accepted_product]
                 self.agent.stock[self.accepted_product] += self.accepted_quantity
+                
+                # Log inventory change - stock unlock (timeout)
+                try:
+                    inventory_logger = InventoryLogger.get_instance()
+                    inventory_logger.log_inventory_change(
+                        agent_jid=str(self.agent.jid),
+                        agent_type="warehouse",
+                        product=self.accepted_product,
+                        change_type="unlock_timeout",
+                        quantity=self.accepted_quantity,
+                        stock_before=stock_before,
+                        stock_after=self.agent.stock[self.accepted_product],
+                        timestamp_sim=self.agent.current_tick
+                    )
+                except Exception:
+                    pass
                 
                 if self.agent.verbose:
                     self.agent.print_stock()            
@@ -796,6 +869,17 @@ class Warehouse(Agent):
                 
                 msg : Message = self.create_presence_info_message(to=vehicle_jid)
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Request",
+                        performative="presence-info",
+                        body=msg.body
+                    )
+                except Exception: 
+                    pass  # Don't crash on logging errors
                 
                 behav = self.agent.ReceivePresenceInfo()
                 temp : Template = Template()
@@ -810,6 +894,17 @@ class Warehouse(Agent):
                 if agent.presence_infos[vehicle_jid] == "PresenceShow.CHAT":
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="order-proposal",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     n_available_vehicles += 1
                     n_sent_messages += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
@@ -825,7 +920,17 @@ class Warehouse(Agent):
                 for vehicle_jid in away_vehicles:
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
-                    
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="order-proposal",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     n_sent_messages += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
             
@@ -1133,6 +1238,17 @@ class Warehouse(Agent):
                 }
                 msg.body = json.dumps(order_data)
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Confirmation",
+                        performative="order-confirmation",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 
                 if agent.verbose:
                     print(f"{agent.jid}> ✉️ Confirmation sent to {best_vehicle} for order {self.request_id}")
@@ -1149,8 +1265,20 @@ class Warehouse(Agent):
                     }
                     
                     reject_msg.body = json.dumps(reject_data)
-                    await self.send(reject_msg)                        
-    
+                    await self.send(reject_msg)     
+
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(reject_msg.to),
+                            message_type="Confirmation",
+                            performative="order-confirmation",
+                            body=reject_msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
+                
     # ------------------------------------------
     #         WAREHOUSE <-> SUPPLIER
     # ------------------------------------------
@@ -1314,7 +1442,17 @@ class Warehouse(Agent):
                           f"\"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
-            
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Request",
+                        performative="warehouse-buy",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
             # Store the last message (or could store all if needed)
             if msg:
                 agent.current_buy_request = msg
@@ -1530,6 +1668,17 @@ class Warehouse(Agent):
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="warehouse-confirm",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             
             if agent.verbose:
                 print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
@@ -1561,6 +1710,17 @@ class Warehouse(Agent):
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="warehouse-deny",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             
             if agent.verbose:
                 print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
@@ -1601,7 +1761,17 @@ class Warehouse(Agent):
                               f"\"{msg.body}\" to {msg.to}")
 
                     await self.send(msg)
-
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="warehouse-buy",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                 # Use CollectSupplierResponses with all required parameters
                 if msg:
                     behav = agent.CollectSupplierResponses(
@@ -1687,10 +1857,27 @@ class Warehouse(Agent):
                     product = order.product
                     quantity = order.quantity
                     
+                    stock_before = agent.stock.get(product, 0)
                     if product in agent.stock:
                         agent.stock[product] += quantity
                     else:
                         agent.stock[product] = quantity
+                    
+                    # Log inventory change - delivery from supplier
+                    try:
+                        inventory_logger = InventoryLogger.get_instance()
+                        inventory_logger.log_inventory_change(
+                            agent_jid=str(agent.jid),
+                            agent_type="warehouse",
+                            product=product,
+                            change_type="delivery",
+                            quantity=quantity,
+                            stock_before=stock_before,
+                            stock_after=agent.stock[product],
+                            timestamp_sim=agent.current_tick
+                        )
+                    except Exception:
+                        pass
                     
                     print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
                     agent.print_stock()                            

@@ -208,17 +208,18 @@ class Order:
             the raw Dijkstra time calculation.
         """
         # Calculate delivery time based on the map using Dijkstra
-        path, fuel, time = map.djikstra(int(sender_location), int(receiver_location))
+        path, fuel, dijkstra_time = map.djikstra(int(sender_location), int(receiver_location))
         self.route = path
-        self.deliver_time = time
+        self.deliver_time = dijkstra_time
         self.fuel = fuel
         self.sender_location = sender_location
         self.receiver_location = receiver_location
         
         # Optimize delivery time using A* task algorithm
-        start_time = time.time()
+        import time as time_module
+        start_time = time_module.time()
         _ , optimized_time , _ = A_star_task_algorithm(map, current_location, [self], capacity, max_fuel)
-        computation_time_ms = (time.time() - start_time) * 1000
+        computation_time_ms = (time_module.time() - start_time) * 1000
         
         self.deliver_time = optimized_time
         
@@ -666,12 +667,29 @@ class Veiculo(Agent):
             
             # If in CHAT (available), has no active tasks
             if presence_show == PresenceShow.CHAT:
+                start_time = time.time()
                 _ , order_time, _= A_star_task_algorithm(
                 self.agent.map,
                 self.agent.current_location,
                 [new_order],
                 self.agent.capacity,
                 self.agent.max_fuel)
+                
+                # Log route calculation
+                try:
+                    computation_time_ms = (time.time() - start_time) * 1000
+                    route_logger = RouteCalculationLogger.get_instance()
+                    route_logger.log_calculation(
+                        vehicle_jid=str(self.agent.jid),
+                        algorithm="astar",
+                        num_orders=1,
+                        computation_time_ms=computation_time_ms,
+                        total_distance=order_time,
+                        route_nodes=f"order_{new_order.orderid}"
+                    )
+                except Exception:
+                    pass
+                
                 return True, order_time
             
             # Create a dictionary with current orders for fast access
@@ -789,7 +807,7 @@ class Veiculo(Agent):
             future_orders.append(order)
             
             # Calculate optimal route with A* from the last point
-            
+            start_time = time.time()
             route, total_time, _ = A_star_task_algorithm(
                 self.agent.map,
                 final_location,
@@ -797,6 +815,23 @@ class Veiculo(Agent):
                 self.agent.capacity,
                 self.agent.max_fuel
             )
+            
+            # Log route calculation
+            try:
+                computation_time_ms = (time.time() - start_time) * 1000
+                route_logger = RouteCalculationLogger.get_instance()
+                route_logger.log_calculation(
+                    vehicle_jid=str(self.agent.jid),
+                    algorithm="astar",
+                    num_orders=len(future_orders),
+                    computation_time_ms=computation_time_ms,
+                    route_length=len(route) if route else 0,
+                    total_distance=total_time,
+                    route_nodes=str([node_id for node_id, _ in route]) if route else "[]"
+                )
+            except Exception:
+                pass
+            
             # Add remaining time to finish current route
             current_route_time = self.agent.time_to_finish_task
             
@@ -933,15 +968,33 @@ class Veiculo(Agent):
                 Duplicated code - consider refactoring to a method of Veiculo class.
             """
             if self.agent.orders:
-                route, time , _ = A_star_task_algorithm(
+                start_time_calc = time.time()
+                route, time_calc , _ = A_star_task_algorithm(
                     self.agent.map,
                     self.agent.current_location,
                     self.agent.orders,
                     self.agent.capacity,
                     self.agent.max_fuel
                 )
+                
+                # Log route calculation
+                try:
+                    computation_time_ms = (time.time() - start_time_calc) * 1000
+                    route_logger = RouteCalculationLogger.get_instance()
+                    route_logger.log_calculation(
+                        vehicle_jid=str(self.agent.jid),
+                        algorithm="astar",
+                        num_orders=len(self.agent.orders),
+                        computation_time_ms=computation_time_ms,
+                        route_length=len(route) if route else 0,
+                        total_distance=time_calc,
+                        route_nodes=str([node_id for node_id, _ in route]) if route else "[]"
+                    )
+                except Exception:
+                    pass
+                
                 self.agent.actual_route = route
-                self.agent.time_to_finish_task = time
+                self.agent.time_to_finish_task = time_calc
     
     class ReceivePickupConfirmation(CyclicBehaviour):
         """
@@ -1098,7 +1151,7 @@ class Veiculo(Agent):
                     
                 data = json.loads(msg.body)
                 type = data.get("type")
-                time = data.get("time")
+                event_time = data.get("time")
                 vehicles = data.get("vehicles", [])  # New vehicles list
                 
                 # Check if this vehicle is in the vehicles list
@@ -1139,13 +1192,31 @@ class Veiculo(Agent):
                             
                         
                         # There are pending orders - calculate new route
-                        self.agent.actual_route, _, _ = A_star_task_algorithm(
+                        start_time_pending = time.time()
+                        self.agent.actual_route, time_pending, _ = A_star_task_algorithm(
                             self.agent.map, 
                             self.agent.current_location,
                             self.agent.pending_orders,
                             self.agent.capacity,
                             self.agent.max_fuel
                         )
+                        
+                        # Log route calculation
+                        try:
+                            computation_time_ms = (time.time() - start_time_pending) * 1000
+                            route_logger = RouteCalculationLogger.get_instance()
+                            route_logger.log_calculation(
+                                vehicle_jid=str(self.agent.jid),
+                                algorithm="astar",
+                                num_orders=len(self.agent.pending_orders),
+                                computation_time_ms=computation_time_ms,
+                                route_length=len(self.agent.actual_route) if self.agent.actual_route else 0,
+                                total_distance=time_pending,
+                                route_nodes=str([node_id for node_id, _ in self.agent.actual_route]) if self.agent.actual_route else "[]"
+                            )
+                        except Exception:
+                            pass
+                        
                         # Move pending orders to orders
                         self.agent.orders = self.agent.pending_orders.copy()
                         self.agent.pending_orders = []
@@ -1160,10 +1231,10 @@ class Veiculo(Agent):
                     # Movement during transit
                     if self.agent.verbose:
                         print(f"[{self.agent.name}] Movement during transit")
-                        print(f"[{self.agent.name}] Available time to move: {time}")
+                        print(f"[{self.agent.name}] Available time to move: {event_time}")
                         print(f"[{self.agent.name}] Current location before moving: {self.agent.current_location}")
                     temp_location = self.agent.current_location
-                    self.agent.current_location = await self.update_location_and_time(time)
+                    self.agent.current_location = await self.update_location_and_time(event_time)
                     if self.agent.verbose:
                         print(f"[{self.agent.name}] Current location after moving: {self.agent.current_location}")
                     _, _, simulated_time = self.agent.map.djikstra(temp_location, self.agent.current_location)
@@ -1180,7 +1251,7 @@ class Veiculo(Agent):
                 # DO NOT notify if:
                 # 1. Simulated time is 0 AND (event is Transit OR not in vehicles list)
                 should_notify = True
-                if time == 0 and type == "Transit":
+                if event_time == 0 and type == "Transit":
                     should_notify = False
                     #print(f"[{self.agent.name}] ⚠️  Notification ignored (time=0 and type={type}, is_for_this_vehicle={is_for_this_vehicle})")
                 if self.agent.verbose:

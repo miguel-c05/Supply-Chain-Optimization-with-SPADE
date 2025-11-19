@@ -349,6 +349,17 @@ class Store(Agent):
                           f"\"{msg.body}\" to {msg.to}")
                 
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Notify",
+                        performative="store-buy",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
             
             # Store the last message (or could store all if needed)
             if msg:
@@ -1017,6 +1028,17 @@ class Store(Agent):
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="store-confirm",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             
             if agent.verbose:
                 print(f"{agent.jid}> Confirmation sent to {self.dest} for request: {msg.body}")
@@ -1150,6 +1172,17 @@ class Store(Agent):
             msg.body = f"{self.quantity} {self.product}"
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="store-deny",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             
             if agent.verbose:
                 print(f"{agent.jid}> Denial sent to {self.dest} for request: {msg.body}")
@@ -1302,6 +1335,17 @@ class Store(Agent):
                               f"\"{msg.body}\" to {msg.to}")
 
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Request",
+                            performative="store-buy",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
 
                 # Use CollectWarehouseResponses instead
                 behav = agent.CollectWarehouseResponses(msg, request_id, quantity, product, num_warehouses)
@@ -1641,14 +1685,32 @@ class Store(Agent):
                     print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
                     return
 
-                # Vehicle is delivering supplies from supplier
+                # Vehicle is delivering supplies from warehouse
                 product = order.product
                 quantity = order.quantity
                 
+                stock_before = agent.stock.get(product, 0)
                 if product in agent.stock:
                     agent.stock[product] += quantity
                 else:
                     agent.stock[product] = quantity
+                
+                # Log inventory change - delivery from warehouse
+                try:
+                    inventory_logger = InventoryLogger.get_instance()
+                    inventory_logger.log_inventory_change(
+                        agent_jid=str(agent.jid),
+                        agent_type="store",
+                        product=product,
+                        change_type="delivery",
+                        quantity=quantity,
+                        stock_before=stock_before,
+                        stock_after=agent.stock[product],
+                        timestamp_sim=agent.current_tick
+                    )
+                except Exception:
+                    pass
+                
                 del agent.pending_deliveries[order.orderid]
                 
                 # Save order stats

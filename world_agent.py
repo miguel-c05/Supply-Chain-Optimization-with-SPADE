@@ -142,6 +142,17 @@ class WorldAgent(Agent):
                             "simulation_time": simulation_time
                         })
                         await self.send(response)
+                        try:
+                            msg_logger = MessageLogger.get_instance()
+                            msg_logger.log_message(
+                                sender=str(self.agent.jid),
+                                receiver=str(response.to),
+                                message_type="Notify",
+                                performative="inform",
+                                body=response.body
+                            )
+                        except Exception:
+                            pass  # Don't crash on logging errors
                         
                         print(f"[{self.agent.name}] Traffic events sent to {sender}\n")
                         return
@@ -193,6 +204,17 @@ class WorldAgent(Agent):
                         "edges": results
                     })
                     await self.send(response)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(response.to),
+                            message_type="Notify",
+                            performative="inform",
+                            body=response.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     
                     print(f"[{self.agent.name}] Sent time-delta response with {len(results)} edge updates")
                     
@@ -344,6 +366,17 @@ class WorldAgent(Agent):
                 "data": world_data
             })
             await self.send(response)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="inform",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             print(f"[{self.agent.name}] World state sent to {sender}")
 
         async def _handle_node_query(self, msg):
@@ -417,6 +450,17 @@ class WorldAgent(Agent):
                     })
                 
                 await self.send(response)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Notify",
+                        performative="inform",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 print(f"[{self.agent.name}] Node {node_id} information sent to {sender}")
                 
             except Exception as e:
@@ -426,6 +470,17 @@ class WorldAgent(Agent):
                     "message": str(e)
                 })
                 await self.send(response)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Error",
+                        performative="error",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
 
         async def _handle_edge_query(self, msg):
             """Handle query for information about edges.
@@ -501,6 +556,17 @@ class WorldAgent(Agent):
                     })
                 
                 await self.send(response)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Notify",
+                        performative="inform",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 print(f"[{self.agent.name}] Edge ({node_u}, {node_v}) information sent to {sender}")
                 
             except Exception as e:
@@ -510,6 +576,17 @@ class WorldAgent(Agent):
                     "message": str(e)
                 })
                 await self.send(response)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Error",
+                        performative="error",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
 
         async def _handle_facilities_query(self, msg):
             """Handle query for facility locations.
@@ -570,6 +647,17 @@ class WorldAgent(Agent):
                 "data": facilities
             })
             await self.send(response)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="inform",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             print(f"[{self.agent.name}] Facilities information sent to {sender}")
 
         async def _handle_subscribe(self, msg):
@@ -620,6 +708,17 @@ class WorldAgent(Agent):
                 "type": "subscription_confirmed"
             })
             await self.send(response)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Confirmation",
+                    performative="confirm",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
 
     async def _broadcast_world_state(self):
         """Broadcast world state to all subscribed agents.
@@ -666,6 +765,17 @@ class WorldAgent(Agent):
             msg.set_metadata("performative", "inform")
             msg.body = json.dumps(world_update)
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Notify",
+                    performative="inform",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
 
     async def setup(self):
         """Set up the WorldAgent with its behaviors.

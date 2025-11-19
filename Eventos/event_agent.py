@@ -729,6 +729,17 @@ class EventDrivenAgent(Agent):
             msg.body = json.dumps(data)
             
             await self.send(msg)
+            try:
+                msg_logger = MessageLogger.get_instance()
+                msg_logger.log_message(
+                    sender=str(self.agent.jid),
+                    receiver=str(msg.to),
+                    message_type="Request",
+                    performative="request",
+                    body=msg.body
+                )
+            except Exception:
+                pass  # Don't crash on logging errors
             if self.agent.verbose:
                 print(f"[{self.agent.name}] ✅ Traffic simulation request sent to world agent")
         
@@ -845,6 +856,17 @@ class EventDrivenAgent(Agent):
                 msg.body = json.dumps(data)
                 
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Request",
+                        performative="inform",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 
                 vehicle_name = str(vehicle_jid).split("@")[0]
                 if self.agent.verbose:
@@ -1307,6 +1329,17 @@ class EventDrivenAgent(Agent):
                 msg.body = json.dumps(data)
                 
                 await self.send(msg)
+                try:
+                    msg_logger = MessageLogger.get_instance()
+                    msg_logger.log_message(
+                        sender=str(self.agent.jid),
+                        receiver=str(msg.to),
+                        message_type="Request",
+                        performative="simulate_traffic",
+                        body=msg.body
+                    )
+                except Exception:
+                    pass  # Don't crash on logging errors
                 print(f"[{self.agent.name}] ✅ Pedido de nova simulação enviado\n")
             if self.agent.verbose:
                 print(f"\n[{self.agent.name}] 📊 Estatísticas:")
@@ -1482,6 +1515,17 @@ class EventDrivenAgent(Agent):
                     msg.body = json.dumps(event_dict)
                     
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Notify",
+                            performative="inform",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     recipient_name = recipient_jid.split('@')[0]
                     
                     if self.agent.verbose:
@@ -1512,6 +1556,17 @@ class EventDrivenAgent(Agent):
                     msg.body = json.dumps(event_dict)
                     
                     await self.send(msg)
+                    try:
+                        msg_logger = MessageLogger.get_instance()
+                        msg_logger.log_message(
+                            sender=str(self.agent.jid),
+                            receiver=str(msg.to),
+                            message_type="Notify",
+                            performative="inform",
+                            body=msg.body
+                        )
+                    except Exception:
+                        pass  # Don't crash on logging errors
                     recipient_name = recipient_jid.split('@')[0]
                     if self.agent.verbose:
                         print(f"[{self.agent.name}]   → {recipient_name}: Transit (time={event_dict['time']:.4f}s)")
@@ -1534,6 +1589,17 @@ class EventDrivenAgent(Agent):
                         msg.body = json.dumps(data)
                         
                         await self.send(msg)
+                        try:
+                            msg_logger = MessageLogger.get_instance()
+                            msg_logger.log_message(
+                                sender=str(self.agent.jid),
+                                receiver=str(msg.to),
+                                message_type="Request",
+                                performative="request",
+                                body=msg.body
+                            )
+                        except Exception:
+                            pass  # Don't crash on logging errors
                         print(f"[{self.agent.name}]   → Pedido de re-simulação enviado ao world agent")
                     else:
                         print(f"\n[{self.agent.name}] ⚠️  Agente do mundo não registrado, evento ignorado")
