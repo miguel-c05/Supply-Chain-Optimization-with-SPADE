@@ -566,11 +566,11 @@ async def main():
     
     await vehicle.start()
     print(f"✓ Veículo iniciado: {VEHICLE_JID}")
-    await vehicle_2.start()
+    await vehicle_2.start(auto_register=True)
     print(f"✓ Veículo iniciado: {VEHICLE_JID_2}")
-    await warehouse.start()
+    await warehouse.start(auto_register=True)
     print(f"✓ Warehouse de teste iniciado: {WAREHOUSE_JID}")
-    await event_agent.start()
+    await event_agent.start(auto_register=True)
     print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
     
     print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")
