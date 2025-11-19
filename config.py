@@ -19,8 +19,13 @@ WAREHOUSE_RESUPPLY_THRESHOLD = 20
 # STORE CONFIGURATION
 # ========================================
 STORE_MAX_BUY_QUANTITY = 20
-STORE_BUY_FREQUENCY = 5  # seconds
+STORE_BUY_FREQUENCY = 5  # seconds (normal mode)
 STORE_BUY_PROBABILITY = 0.6  # 60% chance to buy each cycle
+STORE_HIGH_DEMAND_BUY_FREQUENCY = 3  # seconds (high demand mode - faster purchasing)
+STORE_HIGH_DEMAND_FREQUENCY = 20  # seconds (how often to check if should enter high demand)
+STORE_HIGH_DEMAND_PROBABILITY = 0.3  # 30% chance to enter high demand mode
+STORE_HIGH_DEMAND_DURATION = 60  # seconds (how long high demand mode lasts)
+STORE_HIGH_DEMAND_BUY_PROBABILITY = 0.9  # 90% chance to buy in high demand mode
 
 # ========================================
 # VEHICLE CONFIGURATION

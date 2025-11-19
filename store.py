@@ -1656,6 +1656,67 @@ class Store(Agent):
                 print(f"{agent.jid}> Vehicle {msg.sender} delivered {quantity} units of {product}")
                 agent.print_stock()    
 
+    class HighDemand(PeriodicBehaviour):
+        """
+        Periodic behaviour that simulates high demand by generating random orders.
+        
+        This behaviour periodically creates random purchase requests for products to
+        simulate high demand scenarios in the store. It helps test the store's ability
+        to handle multiple concurrent orders and manage inventory under stress.
+        
+        Attributes:
+            Inherited from PeriodicBehaviour:
+                - period (float): Time between order generations (default: 10 seconds)
+                - Executes continuously while agent is running
+        """
+        def __init__(self,
+                     period=config.STORE_HIGH_DEMAND_FREQUENCY,
+                     start_at=datetime.now() + timedelta(seconds=config.STORE_HIGH_DEMAND_FREQUENCY)):
+            super().__init__(period=period, start_at=start_at)
+        
+        async def run(self):
+            agent : Store = self.agent
+            prev_high_demand = agent.high_demand
+            
+            # Reset to normal demand
+            agent.high_demand = False
+            agent.buy_prob = config.STORE_BUY_PROBABILITY
+            
+            # Check if we should activate high demand
+            roll = random.randint(1,100)
+            if roll > config.STORE_HIGH_DEMAND_PROBABILITY:
+                if agent.verbose: print(f"{agent.jid}> Decided to not activate High Demand mode (roll={roll})")
+                return
+            else: high_demand = True
+            
+            if prev_high_demand: prev_frequency = config.STORE_HIGH_DEMAND_FREQUENCY
+            else: prev_frequency = config.STORE_BUY_FREQUENCY
+            
+            # Set new frequency and buy probability
+            if agent.high_demand:
+                current_frequency = config.STORE_HIGH_DEMAND_FREQUENCY
+                agent.buy_prob = config.STORE_HIGH_DEMAND_BUY_PROBABILITY
+            else:
+                current_frequency = config.STORE_BUY_FREQUENCY
+                agent.buy_prob = config.STORE_BUY_PROBABILITY
+            
+            # If state changed, update buy behaviour
+            if prev_high_demand != high_demand:
+                # Kill previous buy behaviour
+                buy_behav = agent.BuyProduct(period=prev_frequency)
+                agent.remove_behaviour(buy_behav)
+                await buy_behav.kill()
+                
+                if agent.verbose and high_demand:
+                        print(f"{agent.jid}> High Demand mode ACTIVATED")
+                elif agent.verbose and not high_demand:
+                        print(f"{agent.jid}> High Demand mode DEACTIVATED")
+                
+                # Start new buy behaviour
+                buy_behav = agent.BuyProduct(period=current_frequency)
+                agent.add_behaviour(buy_behav)
+            else: pass
+
     # ------------------------------------------
     #           AUXILARY FUNCTIONS
     # ------------------------------------------
@@ -2252,6 +2313,8 @@ class Store(Agent):
         self.product_list = config.PRODUCTS
         self.buy_prob = config.STORE_BUY_PROBABILITY
         self.max_buy_quantity = config.STORE_MAX_BUY_QUANTITY
+
+        self.high_demand = False
         
     async def setup(self):
         """
