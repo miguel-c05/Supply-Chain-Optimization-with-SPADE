@@ -48,63 +48,6 @@ from spade.presence import PresenceShow, Contact, PresenceInfo
 from world.graph import Graph, Node, Edge
 from veiculos.veiculos import Order
 
-# Configuration for pdoc sidebar visibility
-__pdoc__ = {
-    # Hide auxiliary functions
-    'decode_ID': False,
-    'str_to_dict': False,
-    'decode_vehicle_id': False,
-    'dict_to_json': False,
-    
-    # Hide internal class variables
-    'Supplier.id_base': False,
-    'Supplier.total_supplied': False,
-    'Supplier.pending_deliveries': False,
-    'Supplier.vehicle_proposals': False,
-    'Supplier.vehicles': False,
-    'Supplier.presence_infos': False,
-    'Supplier.current_tick': False,
-    'Supplier.node_id': False,
-    'Supplier.map': False,
-    'Supplier.contact_list': False,
-    'Supplier.verbose': False,
-    'Supplier.available_contacts': False,
-    'Supplier.wait_contact_list': False,
-    
-    # Hide behaviour __init__ methods
-    'Supplier.ReceiveBuyRequest.__init__': False,
-    'Supplier.AcceptBuyRequest.__init__': False,
-    'Supplier.ReceiveConfirmationOrDenial.__init__': False,
-    'Supplier.AssignVehicle.__init__': False,
-    'Supplier.ReceivePresenceInfo.__init__': False,
-    'Supplier.ReceiveVehicleProposals.__init__': False,
-    'Supplier.ChooseBestVehicle.__init__': False,
-    'Supplier.ReceiveVehicleArrival.__init__': False,
-    'Supplier.ReceiveTimeDelta.__init__': False,
-    
-    # Hide behaviour instance variables
-    'Supplier.ReceiveBuyRequest.agent': False,
-    'Supplier.AcceptBuyRequest.agent': False,
-    'Supplier.AcceptBuyRequest.order_id': False,
-    'Supplier.AcceptBuyRequest.warehouse_jid': False,
-    'Supplier.AcceptBuyRequest.product': False,
-    'Supplier.AcceptBuyRequest.quantity': False,
-    'Supplier.ReceiveConfirmationOrDenial.agent': False,
-    'Supplier.AssignVehicle.agent': False,
-    'Supplier.AssignVehicle.order': False,
-    'Supplier.AssignVehicle.warehouse_jid': False,
-    'Supplier.ReceivePresenceInfo.agent': False,
-    'Supplier.ReceivePresenceInfo.order_id': False,
-    'Supplier.ReceiveVehicleProposals.agent': False,
-    'Supplier.ReceiveVehicleProposals.order_id': False,
-    'Supplier.ReceiveVehicleProposals.warehouse_jid': False,
-    'Supplier.ChooseBestVehicle.agent': False,
-    'Supplier.ChooseBestVehicle.order_id': False,
-    'Supplier.ChooseBestVehicle.warehouse_jid': False,
-    'Supplier.ReceiveVehicleArrival.agent': False,
-    'Supplier.ReceiveTimeDelta.agent': False,
-}
-
 class Supplier(Agent):
     """
     Supplier Agent for Supply Chain Management System.
