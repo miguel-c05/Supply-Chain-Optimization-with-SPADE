@@ -13,7 +13,6 @@ Dependências:
     - asyncio: Operações assíncronas
     - heapq: Estrutura de dados heap para ordenação eficiente
     - json: Serialização de mensagens
-    - datetime: Gestão de timestamps
     - typing: Anotações de tipo
     - spade: Framework de agentes multi-agente
 """
@@ -394,6 +393,8 @@ class EventDrivenAgent(Agent):
         self.last_simulation_time = 0.0  # Tempo da última simulação
         self.time_simulated = 0.0  # Tempo total simulado
         self.verbose = verbose  # Modo verboso
+        self.first_arrival_received = False  # Flag para indicar se já recebeu o primeiro arrival
+        self.initial_signal_behaviour = None  # Referência para o behaviour de sinal inicial
     async def setup(self):
         """
         Configura e inicializa todos os behaviours e subscrições do agente.
@@ -439,18 +440,20 @@ class EventDrivenAgent(Agent):
         
         self.presence.set_presence(PresenceType.AVAILABLE, PresenceShow.CHAT)
         
-        # Behaviour para enviar mensagem sinaleira inicial
-        initial_signal = self.SendInitialSignalBehaviour()
-        self.add_behaviour(initial_signal)
-        
-        # Behaviour para registrar o o transito
-        transit_registration_behaviour = self.RegisterTransitBehaviour()
-        self.add_behaviour(transit_registration_behaviour)
-        # Behaviour para receber eventos continuamente
+        # Behaviour para receber eventos continuamente (deve estar ativo desde o início)
         receive_behaviour = self.ReceiveEventsBehaviour()
         self.add_behaviour(receive_behaviour)
         
-        # Behaviour periódico para processar eventos (a cada 5 segundos)
+        # Behaviour para enviar mensagem sinaleira inicial (periódico até receber arrival)
+        self.initial_signal_behaviour = self.SendInitialSignalBehaviour(period=2.0)  # Envia a cada 2s
+        self.add_behaviour(self.initial_signal_behaviour)
+        
+        # Behaviour para registrar o transito
+        transit_registration_behaviour = self.RegisterTransitBehaviour()
+        self.add_behaviour(transit_registration_behaviour)
+        
+        # Behaviour periódico para processar eventos (a cada X segundos)
+        # Será iniciado apenas após receber o primeiro arrival
         process_behaviour = self.ProcessEventsBehaviour(period=self.simulation_interval)
         self.add_behaviour(process_behaviour)
     
@@ -523,23 +526,24 @@ class EventDrivenAgent(Agent):
             if self.agent.verbose:
                 print(f"[{self.agent.name}] ✅ Pedido de simulação de trânsito enviado ao world agent")
         
-    class SendInitialSignalBehaviour(OneShotBehaviour):
+    class SendInitialSignalBehaviour(PeriodicBehaviour):
         """
-        Behaviour de sinalização inicial para activação de veículos.
+        Behaviour de sinalização inicial periódico para activação de veículos.
         
-        Este behaviour executa uma única vez durante a inicialização, enviando
-        uma mensagem de "arrival" fictícia a todos os veículos registados. O objectivo
-        é ativar os behaviours de movimento nos veículos sem causar acções reais,
-        servindo como um gatilho de inicialização do sistema.
+        Este behaviour executa periodicamente (a cada 2 segundos) durante a inicialização,
+        enviando mensagens de "arrival" fictícias a todos os veículos registados até que
+        o primeiro evento de arrival real seja recebido. O objectivo é garantir que os
+        veículos estejam activos e prontos para responder.
         
         Estratégia de Inicialização:
             - Utiliza um nome de veículo fictício ("vehicle_init_signal_999")
             - Tempo do evento é 0.0 (momento inicial)
-            - Veículos ignoram o evento (nome não corresponde)
-            - Mas notificam o event agent da sua presença
+            - Envia periodicamente até receber primeiro arrival real
+            - Termina automaticamente quando first_arrival_received = True
+            - Veículos ignoram o evento fictício mas notificam o event agent
         
         Attributes:
-            Herda attributes de OneShotBehaviour.
+            Herda attributes de PeriodicBehaviour.
         
         Message Format:
             {
@@ -549,14 +553,14 @@ class EventDrivenAgent(Agent):
             }
         
         Examples:
-            >>> # Adicionado automaticamente no setup()
-            >>> initial_signal = self.SendInitialSignalBehaviour()
+            >>> # Adicionado automaticamente no setup() com período de 2s
+            >>> initial_signal = self.SendInitialSignalBehaviour(period=2.0)
             >>> self.add_behaviour(initial_signal)
         
         Note:
             Este mecanismo garante que todos os veículos estejam prontos para
-            receber eventos antes da simulação começar efectivamente. Os veículos
-            reconhecem a mensagem mas não executam acções baseadas nela.
+            receber eventos antes da simulação começar efectivamente. O behaviour
+            para automaticamente quando o primeiro arrival real é recebido.
         
         Warning:
             Se registered_vehicles estiver vazio, o behaviour termina sem acção
@@ -565,23 +569,32 @@ class EventDrivenAgent(Agent):
         
         async def run(self):
             """
-            Envia sinal de inicialização a todos os veículos registados.
+            Envia sinal de inicialização a todos os veículos registados periodicamente.
             
             Itera sobre a lista de veículos registados e envia a cada um uma
-            mensagem de arrival fictícia. Apesar de fictícia, esta mensagem
-            activa os sistemas de recepção dos veículos.
+            mensagem de arrival fictícia. Continua a enviar até que o primeiro
+            arrival real seja recebido.
             
             Returns:
                 None: Executa efeitos colaterais (envio de mensagens).
             
             Note:
-                O nome fictício "vehicle_init_signal_999" é intencional e não
-                deve corresponder a nenhum veículo real no sistema.
+                O behaviour verifica a flag first_arrival_received e termina
+                quando esta é True. O nome fictício "vehicle_init_signal_999"
+                é intencional e não deve corresponder a nenhum veículo real.
             """
-            # Aguardar um pouco para garantir que os veículos estejam registrados
+            # Verificar se já recebeu o primeiro arrival
+            if self.agent.first_arrival_received:
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] ✅ Primeiro arrival recebido. Parando envio de sinais iniciais.")
+                else:
+                    print(f"[{self.agent.name}] ✅ Primeiro arrival recebido.")
+                self.kill()  # Parar este behaviour
+                return
             
             if not self.agent.registered_vehicles:
                 print(f"[{self.agent.name}] ⚠️ Nenhum veículo registrado para enviar sinal inicial")
+                self.kill()
                 return
             
             # Usar nome fictício que não corresponde a nenhum veículo real
@@ -590,15 +603,15 @@ class EventDrivenAgent(Agent):
             # Enviar mensagem para TODOS os veículos registrados
             if self.agent.verbose:
                 print(f"\n{'='*70}")
-                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL")
+                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL (periódico)")
                 print(f"  Destinatários: {len(self.agent.registered_vehicles)} veículos")
                 print(f"  Veículo (fictício): {vehicle_name_ficticio}")
                 print(f"  Tipo: arrival")
                 print(f"  Tempo: 0.0")
-                print(f"  Nota: Mensagem será ignorada pelos veículos (nome não corresponde e tempo zero mas vao notificar o agente)")
                 print(f"{'='*70}")
             else:
-                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL")
+                print(f"[{self.agent.name}] 🚦 ENVIANDO SINAL INICIAL (aguardando arrival real...)")
+            
             for vehicle_jid in self.agent.registered_vehicles:
                 # Criar mensagem de arrival inicial com tempo zero
                 msg = Message(to=vehicle_jid)
@@ -745,7 +758,6 @@ class EventDrivenAgent(Agent):
                                     }]
                                 },
                                 sender=str(msg.sender),
-                                timestamp=event_data.get("timestamp")
                             )
                             
                             # Adicionar à lista de eventos de trânsito
@@ -762,7 +774,6 @@ class EventDrivenAgent(Agent):
                             time=self.agent.world_simulation_time,
                             data={"action": "request_new_simulation"},
                             sender=str(self.agent.jid),
-                            timestamp=datetime.now().isoformat()
                         )
                         heapq.heappush(self.agent.event_heap, resimulation_event)
                         if self.agent.verbose:
@@ -792,7 +803,6 @@ class EventDrivenAgent(Agent):
                         time=time,
                         data=event_data,
                         sender=str(msg.sender),
-                        timestamp=data.get("timestamp")
                     )
                     
                     # Verificar se é evento de trânsito manual (não do world agent)
@@ -805,12 +815,21 @@ class EventDrivenAgent(Agent):
                     elif event_type == "arrival":
                         # Adicionar eventos de arrival à lista apenas se time > 0
                         if time > 0:
+                            # Marcar que recebeu o primeiro arrival
+                            if not self.agent.first_arrival_received:
+                                self.agent.first_arrival_received = True
+                                if self.agent.verbose:
+                                    print(f"[{self.agent.name}] ✅ PRIMEIRO ARRIVAL RECEBIDO! Iniciando processamento da heap.")
+                                else:
+                                    print(f"[{self.agent.name}] ✅ PRIMEIRO ARRIVAL RECEBIDO!")
+                            
                             self.agent.arrival_events.append(event)
                             if self.agent.verbose:
                                 print(f"[{self.agent.name}] 📩 Evento ARRIVAL adicionado à lista: {event}")
                                 print(f"   Eventos de arrival: {len(self.agent.arrival_events)}")
                         else:
-                            print(f"[{self.agent.name}] ⚠️  Evento ARRIVAL ignorado (time=0): {event}")
+                            if self.agent.verbose:
+                                print(f"[{self.agent.name}] ⚠️  Evento ARRIVAL ignorado (time=0): {event}")
                     else:
                         # Adicionar à heap outros tipos de eventos
                         heapq.heappush(self.agent.event_heap, event)
@@ -895,7 +914,7 @@ class EventDrivenAgent(Agent):
                    - Se heap vazia, termina ciclo
                    - Regista estado para logging
                 
-                3. **Extracção de Eventos**:
+                3. **Extração de Eventos**:
                    - Remove primeiro evento (menor tempo)
                    - Colecta eventos subsequentes com mesmo tempo
                    - Cria lista de eventos a processar
@@ -927,6 +946,7 @@ class EventDrivenAgent(Agent):
             Note:
                 O decremento do tempo dos eventos de trânsito garante que o tempo
                 restante reflicta sempre o intervalo até ao próximo processamento.
+                O processamento só começa após receber o primeiro arrival real.
             
             Examples:
                 >>> # Exemplo de log verbose durante execução
@@ -941,6 +961,12 @@ class EventDrivenAgent(Agent):
                 [event_agent] 📢 Notificando evento ARRIVAL agrupado para 3 veículos
                    Veículos que chegaram: ['vehicle1', 'vehicle2']
             """
+            # Verificar se já recebeu o primeiro arrival antes de processar
+            if not self.agent.first_arrival_received:
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] ⏸️ Aguardando primeiro arrival antes de processar heap...")
+                return  # Não processar até receber o primeiro arrival
+            
             # Adicionar eventos de arrival à heap e esvaziar a lista
             for arrival_event in self.agent.arrival_events:
                 heapq.heappush(self.agent.event_heap, arrival_event)
@@ -1395,11 +1421,11 @@ async def main():
     EVENT_AGENT_PASSWORD = "event123"
     WORLD_AGENT_JID = "world@localhost"
     WORLD_AGENT_PASSWORD = "password"
-    WAREHOUSE_JID = "warehouse_test@localhost"
+    WAREHOUSE_JID = "warehouse1_test@localhost"
     WAREHOUSE_PASSWORD = "warehouse123"
-    STORE_JID = "store_test@localhost"
+    STORE_JID = "store1_test@localhost"
     STORE_PASSWORD = "store123"
-    SUPLIER_JID = "supplier_test@localhost"
+    SUPLIER_JID = "supplier1_test@localhost"
     SUPLIER_PASSWORD = "supplier123"
     VEHICLE_JID = "vehicle1@localhost"
     VEHICLE_PASSWORD = "vehicle123"
@@ -1457,14 +1483,8 @@ async def main():
         print("❌ ERRO: Não foram encontrados stores para localização inicial do veículo!")
         return
     
-    initial_location = store_locations[0]
-    initial_location1 = store_locations[3]
     
-    print(f"\n🚚 Criando veículo...")
-    print(f"   Localização inicial: {initial_location}")
-    print(f"   Capacidade: 1000 kg")
-    print(f"   Combustível máximo: 100 L")
-    
+    all_contacts = [WAREHOUSE_JID, STORE_JID, SUPLIER_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3]
     # Criar o veículo
     vehicle = Veiculo(
         jid=VEHICLE_JID,
@@ -1474,7 +1494,7 @@ async def main():
         max_orders=10,
         map=world.graph,
         weight=1500,
-        current_location=initial_location,
+        current_location=store_locations[0],
         event_agent_jid=EVENT_AGENT_JID
     )
     vehicle_2 = Veiculo(
@@ -1485,7 +1505,7 @@ async def main():
         max_orders=10,
         map=world.graph,
         weight=1500,
-        current_location=initial_location1,
+        current_location=store_locations[0],
         event_agent_jid=EVENT_AGENT_JID
     )
     vehicle_3 = Veiculo(
@@ -1496,27 +1516,31 @@ async def main():
         max_orders=10,
         map=world.graph,
         weight=1500,
-        current_location=initial_location1,
+        current_location=store_locations[0],
         event_agent_jid=EVENT_AGENT_JID
     )
     warehouse_1= Warehouse(
         jid=WAREHOUSE_JID,
         password=WAREHOUSE_PASSWORD,
-        graph=world.graph,
-        node_id=warehouse_locations[0]
+        map=world.graph,
+        node_id=warehouse_locations[0],
+        contact_list=all_contacts
     )
     store_1= Store(
         jid=STORE_JID,
         password=STORE_PASSWORD,
-        graph=world.graph,
-        node_id=store_locations[0])
+        map=world.graph,
+        node_id=store_locations[0],
+        contact_list=[WAREHOUSE_JID]
+    )
     
     supplier_1= Supplier(
         jid=SUPLIER_JID,
         password=SUPLIER_PASSWORD,
-        graph=world.graph,
-        node_id=suplier_locations[0])
-    
+        map=world.graph,
+        node_id=suplier_locations[0],
+        contact_list=[WAREHOUSE_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3]
+    )
     
     # Criar event agent com lista de veículos registrados e world agent
     print(f"\n⚙️ Criando Event Agent...")
@@ -1527,6 +1551,7 @@ async def main():
         registered_vehicles=[VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3],
         registered_warehouses=[WAREHOUSE_JID],
         registered_stores=[STORE_JID],
+        registered_suppliers=[SUPLIER_JID],
         world_agent=WORLD_AGENT_JID,
         world_simulation_time=10.0,
         verbose=False
@@ -1592,7 +1617,6 @@ async def main():
     print(f"[SISTEMA] 🎯 Event Agent processando a cada {event_agent.simulation_interval}s")
     print(f"[SISTEMA] 🚦 Event Agent solicitando simulação de tráfego ao World Agent")
     print(f"[SISTEMA] 📦 Enviando ordens aleatórias a cada 5 segundos...")
-    print(f"[SISTEMA] 🚚 Veículo em localização {initial_location}")
     print(f"[SISTEMA] ⌨️  Pressione Ctrl+C para parar\n")
     
     try:

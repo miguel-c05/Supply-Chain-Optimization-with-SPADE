@@ -909,15 +909,15 @@ class Warehouse(Agent):
         return order
     # ------------------------------------------
     
-    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False, contact_list = []):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
-        
+        self.contact_list = contact_list
         # Extract instance number from JID for ID encoding (e.g., "warehouse1@localhost" -> 1)
         jid_name = str(jid).split('@')[0]
         instance_id = int(''.join(filter(str.isdigit, jid_name)))
-        
+
         # Calculate ID base: Warehouse type code = 2
         self.id_base = (2 * 100_000_000) + (instance_id * 1_000_000)
         
@@ -929,7 +929,9 @@ class Warehouse(Agent):
     
     async def setup(self):
         self.presence.approve_all = True
-        
+        for contact in self.contact_list:
+            self.presence.subscribe(contact)
+            print(f"{self.jid}> Subscribed to presence of {contact}")
         # Initialize stock and time
         self.stock = {}
         self.current_tick = 0

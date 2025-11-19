@@ -504,10 +504,11 @@ class Store(Agent):
                 print(f"  - {product}: {quantity} units")
     # ------------------------------------------
     
-    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False):
+    def __init__(self, jid, password, map : Graph, node_id : int, port = 5222, verify_security = False,contact_list = []):
         super().__init__(jid, password, port, verify_security)
         self.node_id = node_id
         self.map : Graph = map
+        self.contact_list = contact_list
         
         # Extract instance number from JID for ID encoding (e.g., "store1@localhost" -> 1)
         jid_name = str(jid).split('@')[0]
@@ -528,7 +529,9 @@ class Store(Agent):
         
     async def setup(self):
         self.presence.approve_all = True
-        
+        for contact in self.contact_list:
+            self.presence.subscribe(contact)
+            print(f"{self.jid}> Sent subscription request to {contact}")
         self.stock = {}
         self.current_buy_request : Message = None
         self.failed_requests : queue.Queue = queue.Queue()

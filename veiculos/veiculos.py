@@ -860,7 +860,6 @@ class Veiculo(Agent):
             if presence_show == PresenceShow.CHAT:
                 print(f"[{self.agent.name}] Veículo disponível - ignorando mensagens de movimento")
                 # Veículo disponível (sem tarefas) - não processa mensagens de movimento
-                return
             if msg:
                 # print a mensagem recebida
                 print(f"[{self.agent.name}] Mensagem recebida no MovementBehaviour")
