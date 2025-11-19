@@ -1539,7 +1539,7 @@ async def main():
     
     await warehouse.start()
     print(f"✓ Warehouse de teste iniciado: {WAREHOUSE_JID}")
-    await event_agent.start()
+    await event_agent.start(auto_register=True)
     print(f"✓ Event Agent iniciado: {EVENT_AGENT_JID}")
     
     print(f"\n[SISTEMA] ✓ Sistema de teste iniciado!")

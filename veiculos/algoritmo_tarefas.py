@@ -344,7 +344,6 @@ class TreeNode:
                 order_id=point_order_id  # Associar order_id ao nó
             )
             child_node.quantity = new_quantity
-            #print(f"Depth:{child_node.depth}")
             self.add_child(child_node)
 
     def evaluate_available_points(self,graph: Graph):
@@ -703,11 +702,9 @@ def A_star_task_algorithm(graph: Graph, start:int, tasks:list["Order"],capacity:
     
     # Limpar cache do Dijkstra para nova execução
     clear_dijkstra_cache()
-    
     # Calcular o custo médio por tarefa
     total_time = sum(order.deliver_time for order in tasks)
     average_cost_per_task = total_time / len(tasks) if tasks else 0
-    
     # Criar o estado inicial (sender_location, receiver_location, quantity, orderid)
     initial_state = [
         (order.sender_location, order.receiver_location, order.quantity, order.orderid)
@@ -762,6 +759,8 @@ def A_star_task_algorithm(graph: Graph, start:int, tasks:list["Order"],capacity:
         # Adicionar filhos à fila de prioridade
         for child in current_node.children:
             open_list.put((child.f, id(child), child))
+    
+    root.plot_tree("route_search.png")
     
     return None, float('inf'), root
 

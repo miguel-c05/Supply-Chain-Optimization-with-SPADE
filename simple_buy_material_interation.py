@@ -28,7 +28,7 @@ from spade.behaviour import OneShotBehaviour
 from spade.message import Message
 from spade.template import Template
 import json
-
+import config
 from world.world import World
 from warehouse import Warehouse
 from supplier import Supplier
@@ -41,9 +41,22 @@ async def main():
     print("="*70 + "\n")
     
     # Create world
-    world = World(width=3, height=3, warehouses=1, suppliers=2, stores=0, mode="uniform")
-    graph = world.graph
-    
+    w = World(width=8,
+        height=8,
+        mode="different", 
+        max_cost=4, 
+        gas_stations=2, 
+        warehouses=3,
+        suppliers=2, 
+        stores=3, 
+        highway=False,
+        traffic_probability=0.3,
+        traffic_spread_probability=0.7,
+        traffic_interval=3,
+        untraffic_probability=0.4
+        )
+    graph = w.graph
+    w.plot_graph()
     # Find nodes
     warehouse_node = None
     supplier_nodes = []
@@ -74,25 +87,28 @@ async def main():
     
     # Create vehicles
     vehicle1 = Veiculo(
+        
         jid=vehicle1_jid,
         password="pass",
-        max_fuel=1000,
-        capacity=100,
+        max_fuel=100,
+        capacity=config.VEHICLE_CAPACITY,
         max_orders=5,
         map=graph,
-        weight=1.0,
-        current_location=supplier_nodes[0]  # Start at supplier1
+        weight=1500,
+        current_location=1,  # Start at node 1
+        event_agent_jid=None  # No event agent in this test
     )
     
     vehicle2 = Veiculo(
         jid=vehicle2_jid,
         password="pass",
         max_fuel=1000,
-        capacity=50,
+        capacity=config.VEHICLE_CAPACITY,
         max_orders=5,
         map=graph,
-        weight=1.0,
-        current_location=supplier_nodes[1]  # Start at supplier2
+        weight=1500,
+        current_location=1,  # Start at node 30
+        event_agent_jid=None  # No event agent in this test
     )
     
     # Start all agents
@@ -218,7 +234,10 @@ async def main():
         await vehicle2.stop()
         return
     
+    #====================================================================
     # TEST 2: Selected supplier assigns vehicle
+    #====================================================================
+    
     print("\n" + "="*70)
     print("TEST 2: SUPPLIER ASSIGNS VEHICLE FOR DELIVERY")
     print("="*70)

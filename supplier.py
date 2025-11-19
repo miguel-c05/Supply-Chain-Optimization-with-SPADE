@@ -258,12 +258,20 @@ class Supplier(Agent):
             
             msg : Message = Message(to=to)
             msg.set_metadata("performative", "order-proposal")
-            msg.set_metadata("supplier_id", str(self.agent.jid))
-            msg.set_metadata("node_id", str(self.agent.node_id))
-            msg.set_metadata("request_id", str(self.request_id))
             
             order = self.agent.pending_deliveries[self.request_id]
-            msg.body = json.dumps(order.__dict__)
+
+            new_body = {
+                "orderid" : self.request_id,
+                "product" : order.product,
+                "quantity" : order.quantity,
+                "sender" : order.receiver,
+                "receiver" : order.sender,
+                "sender_location" : order.receiver_location,
+                "receiver_location" : order.sender_location
+            }
+            
+            msg.body = json.dumps(new_body)
             return msg
         
         async def run(self):
@@ -289,20 +297,22 @@ class Supplier(Agent):
                 msg : Message = self.create_presence_info_message(to=vehicle_jid)
                 await self.send(msg)
                 
-                behav = self.agent.ReceivePresenceInfo(vehicle_jid)
+                behav = self.agent.ReceivePresenceInfo()
                 temp : Template = Template()
                 temp.set_metadata("performative", "presence-response")
+                temp.set_metadata("vehicle_id", str(vehicle_jid))
                 self.agent.add_behaviour(behav, temp)
                 
                 await behav.join()
+                print(f"{agent.jid}> Presence info from {vehicle_jid}: {agent.presence_infos}")
                 
-                if agent.latest_presence_info == PresenceShow.CHAT:
+                if agent.presence_infos[vehicle_jid] == "PresenceShow.CHAT":
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
                     n_available_vehicles += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
                 
-                elif agent.latest_presence_info and n_available_vehicles == 0:
+                elif agent.presence_infos[vehicle_jid] == "PresenceShow.AWAY" and n_available_vehicles == 0:
                     away_vehicles.append(vehicle_jid)
                     print(f"{agent.jid}> ⚠️ Vehicle {vehicle_jid} is away.")
                     
@@ -318,8 +328,6 @@ class Supplier(Agent):
             behav = self.agent.ReceiveVehicleProposals(self.request_id)
             temp : Template = Template()
             temp.set_metadata("performative", "vehicle-proposal")
-            temp.set_metadata("supplier_id", str(agent.jid))
-            temp.set_metadata("request_id", str(self.request_id))
             self.agent.add_behaviour(behav, temp)
             
             # Waits for all vehicle proposals to be received
@@ -336,11 +344,9 @@ class Supplier(Agent):
                 presence_info = data["presence_show"]
                 print(f"{agent.jid}> Received presence info response from {msg.sender}:"
                       f"{presence_info}")
-                agent.latest_presence_info = presence_info
+                agent.presence_infos[msg.get_metadata("vehicle_id")] = presence_info
             else:
                 print(f"{agent.jid}> No presence info response received from vehicle.")
-            
-            
                   
     class ReceiveVehicleProposals(OneShotBehaviour):
         def __init__(self, request_id):
@@ -369,7 +375,7 @@ class Supplier(Agent):
             proposals = {}  # vehicle_jid : (can_fit, time)
             
             while True:
-                msg : Message = await self.receive(timeout=10)
+                msg : Message = await self.receive(timeout=5)
                 
                 if msg:
                     print(f"{agent.jid}> Received vehicle proposal from {msg.sender}")
@@ -397,12 +403,12 @@ class Supplier(Agent):
                 # Send confirmation to the selected vehicle
                 msg : Message = Message(to=best_vehicle)
                 msg.set_metadata("performative", "order-confirmation")
-                msg.set_metadata("supplier_id", str(agent.jid))
-                msg.set_metadata("node_id", str(agent.node_id))
                 
-                order = agent.pending_deliveries[order_id]
-                order_data = order.__dict__.copy()
-                order_data["confirmed"] = True  # Add confirmation flag
+                order : Order = agent.pending_deliveries[order_id]
+                order_data = {
+                    "orderid" : order.orderid,
+                    "confirmed" : True
+                }
                 msg.body = json.dumps(order_data)
                 
                 await self.send(msg)
@@ -413,11 +419,12 @@ class Supplier(Agent):
                 for vehicle_jid in rejected_vehicles:
                     reject_msg : Message = Message(to=vehicle_jid)
                     reject_msg.set_metadata("performative", "order-confirmation")
-                    reject_msg.set_metadata("supplier_id", str(agent.jid))
-                    reject_msg.set_metadata("node_id", str(agent.node_id))
                     
-                    reject_data = order.__dict__.copy()
-                    reject_data["confirmed"] = False  # Rejection flag
+                    reject_data = {
+                    "orderid" : order.orderid,
+                    "confirmed" : False
+                    }
+                    
                     reject_msg.body = json.dumps(reject_data)
                     
                     await self.send(reject_msg)
@@ -555,7 +562,7 @@ class Supplier(Agent):
         
         # Identify vehicles from presence contacts (will be populated dynamically)
         self.vehicles = []
-        self.latest_presence_info = None
+        self.presence_infos : dict[str, str] = {}
         print(f"{self.jid}> Supplier initialized with INFINITE stock")
         self.print_stats()
         
