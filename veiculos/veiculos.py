@@ -419,8 +419,8 @@ class Veiculo(Agent):
                     "delivery_time": delivery_time,
                     "sender_jid": str(msg.sender)
                 }
-                
-                print(f"[{self.agent.name}] Ordem {order.orderid} adicionada às confirmações pendentes. Total: {len(self.agent.pending_confirmations)}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Ordem {order.orderid} adicionada às confirmações pendentes. Total: {len(self.agent.pending_confirmations)}")
         
         async def calculate_order_info(self, order: Order):
             """
@@ -707,11 +707,13 @@ class Veiculo(Agent):
                             # Adiciona às orders (rota atual)
                             self.agent.orders.append(order)
                             await self.recalculate_route()
-                            print(f"[{self.agent.name}] Ordem {order.orderid} aceite e adicionada às orders")
+                            if self.agent.verbose:
+                                print(f"[{self.agent.name}] Ordem {order.orderid} aceite e adicionada às orders")
                         else:
                             # Adiciona às pending_orders (executar depois)
                             self.agent.pending_orders.append(order)
-                            print(f"[{self.agent.name}] Ordem {order.orderid} aceite e adicionada às pending_orders")
+                            if self.agent.verbose:
+                                print(f"[{self.agent.name}] Ordem {order.orderid} aceite e adicionada às pending_orders")
                         
                         # Atualizar presença para AWAY (ocupado com tarefas)
                         self.agent.presence.set_presence(
@@ -1020,7 +1022,8 @@ class Veiculo(Agent):
             
             # Verificar se é pickup (sender_location)
             if node_id == order.sender_location and not order.comecou:
-                print(f"[{self.agent.name}] PICKUP - Ordem {order.orderid} em {node_id}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] PICKUP - Ordem {order.orderid} em {node_id}")
                 
                 # Atualizar carga
                 self.agent.current_load += order.quantity
@@ -1048,7 +1051,8 @@ class Veiculo(Agent):
                 
             # Verificar se é delivery (receiver_location)
             elif node_id == order.receiver_location and order.comecou:
-                print(f"[{self.agent.name}] DELIVERY - Ordem {order.orderid} em {node_id}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] DELIVERY - Ordem {order.orderid} em {node_id}")
                 
                 # Atualizar carga
                 self.agent.current_load -= order.quantity
@@ -1111,7 +1115,7 @@ class Veiculo(Agent):
                   }
             """
             msg = Message(to=order.sender)
-            msg.set_metadata("performative", "inform")
+            msg.set_metadata("performative", "vehicle-pickup")
             msg.set_metadata("type", "order-started")
             
             data = {
@@ -1155,7 +1159,7 @@ class Veiculo(Agent):
             }
             msg.body = json.dumps(data)
             await self.send(msg)
-            print(f"[{self.agent.name}] Notificado warehouse: ordem {order.orderid} completada")
+            print(f"[{self.agent.name}] Notificado {order.receiver}: ordem {order.orderid} completada")
         
         async def notify_event_agent(self, time_left: float, next_node: int):
             """
@@ -1250,8 +1254,8 @@ class Veiculo(Agent):
                 edge = self.agent.map.get_edge(node1_id, node2_id)
                 if edge:
                     edge.weight = new_weight
-            
-            print(f"[{self.agent.name}] Mapa atualizado com novos dados de trânsito") 
+            if self.agent.verbose:
+                print(f"[{self.agent.name}] Mapa atualizado com novos dados de trânsito") 
                 
 
         async def update_location_and_time(self, time_left):
@@ -1308,8 +1312,9 @@ class Veiculo(Agent):
             # Percorre a rota enquanto houver tempo
             while route_index < len(route) and remaining_time > 0:
                 next_node_id = route[route_index]
-                print(f"[{self.agent.name}] Rota atual: {route}")
-                print(f"[{self.agent.name}] Tentando mover para o nó {next_node_id} com tempo restante {remaining_time}")
+                if self.agent.verbose:
+                    print(f"[{self.agent.name}] Rota atual: {route}")
+                    print(f"[{self.agent.name}] Tentando mover para o nó {next_node_id} com tempo restante {remaining_time}")
                 if current_pos == next_node_id:
                     route_index += 1
                     continue
@@ -1323,7 +1328,8 @@ class Veiculo(Agent):
                 
                 # Tempo necessário para atravessar esta aresta
                 edge_time = edge.weight  # assumindo que weight é o tempo
-                print(f"[{self.agent.name}] Tempo necessário para ir de {current_pos} para {next_node_id}: {edge_time}")
+                if self.agent.verbose: 
+                    print(f"[{self.agent.name}] Tempo necessário para aresta {current_pos} -> {next_node_id}: {edge_time}")
                 
                 if remaining_time >= edge_time:
                     # Tempo suficiente para chegar ao próximo nó

@@ -384,7 +384,8 @@ class Store(Agent):
                 # Parse message body
                 try:
                     data = json.loads(msg.body)
-                    order = agent.dict_to_order(data)
+                    orderid = data["orderid"]
+                    order = agent.pending_orders[orderid]              
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
                     return

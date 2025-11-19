@@ -319,6 +319,7 @@ class Warehouse(Agent):
                     msg : Message = self.create_call_for_proposal_message(to=vehicle_jid)
                     await self.send(msg)
                     n_available_vehicles += 1
+                    n_sent_messages += 1
                     print(f"{agent.jid}> ✉️ Sent order proposal to {vehicle_jid}")
                 
                 elif agent.presence_infos[vehicle_jid] == "PresenceShow.AWAY" and n_available_vehicles == 0:
@@ -410,6 +411,10 @@ class Warehouse(Agent):
         async def run(self):
             agent : Warehouse = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
+            
+            # Verificar se a entrada para este order_id existe, se não criar
+            if int(self.request_id) not in agent.vehicle_proposals:
+                agent.vehicle_proposals[int(self.request_id)] = {}
             
             proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
             
@@ -778,7 +783,8 @@ class Warehouse(Agent):
                 # Parse message body
                 try:
                     data = json.loads(msg.body)
-                    order = agent.dict_to_order(data)
+                    orderid = data["orderid"]
+                    order = agent.pending_deliveries[orderid] 
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"{agent.jid}> ERROR: Failed to parse vehicle message: {e}")
                     return

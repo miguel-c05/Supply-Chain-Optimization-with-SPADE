@@ -1423,10 +1423,16 @@ async def main():
     WORLD_AGENT_PASSWORD = "password"
     WAREHOUSE_JID = "warehouse1_test@localhost"
     WAREHOUSE_PASSWORD = "warehouse123"
+    WAREHOUSE1_JID = "warehouse2_test@localhost"
+    WAREHOUSE1_PASSWORD = "warehouse234"
     STORE_JID = "store1_test@localhost"
     STORE_PASSWORD = "store123"
+    STORE_JID_2 = "store2_test@localhost"
+    STORE_PASSWORD_2 = "store234"
     SUPLIER_JID = "supplier1_test@localhost"
     SUPLIER_PASSWORD = "supplier123"
+    SUPLIER_JID_2 = "supplier2_test@localhost"
+    SUPLIER_PASSWORD_2 = "supplier234"
     VEHICLE_JID = "vehicle1@localhost"
     VEHICLE_PASSWORD = "vehicle123"
     VEHICLE_JID_2 = "vehicle2@localhost"
@@ -1441,8 +1447,8 @@ async def main():
     # Criar o mundo
     print("\n🌍 Criando o mundo...")
     world = World(
-        width=10,
-        height=10,
+        width=5,
+        height=5,
         mode="different", 
         max_cost=4, 
         gas_stations=0, 
@@ -1484,7 +1490,7 @@ async def main():
         return
     
     
-    all_contacts = [WAREHOUSE_JID, STORE_JID, SUPLIER_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3]
+    all_contacts = [WAREHOUSE_JID, STORE_JID, SUPLIER_JID, VEHICLE_JID, VEHICLE_JID_2, VEHICLE_JID_3, WAREHOUSE1_JID, STORE_JID_2, SUPLIER_JID_2]
     # Criar o veículo
     vehicle = Veiculo(
         jid=VEHICLE_JID,
@@ -1495,7 +1501,8 @@ async def main():
         map=world.graph,
         weight=1500,
         current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID
+        event_agent_jid=EVENT_AGENT_JID,
+        verbose=False
     )
     vehicle_2 = Veiculo(
         jid=VEHICLE_JID_2,
@@ -1506,7 +1513,8 @@ async def main():
         map=world.graph,
         weight=1500,
         current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID
+        event_agent_jid=EVENT_AGENT_JID,
+        verbose=False
     )
     vehicle_3 = Veiculo(
         jid=VEHICLE_JID_3,
@@ -1517,7 +1525,8 @@ async def main():
         map=world.graph,
         weight=1500,
         current_location=store_locations[0],
-        event_agent_jid=EVENT_AGENT_JID
+        event_agent_jid=EVENT_AGENT_JID,
+        verbose=False
     )
     warehouse_1= Warehouse(
         jid=WAREHOUSE_JID,
@@ -1526,12 +1535,28 @@ async def main():
         node_id=warehouse_locations[0],
         contact_list=all_contacts
     )
+    warehouse_2= Warehouse(
+        jid=WAREHOUSE1_JID,
+        password=WAREHOUSE1_PASSWORD,
+        map=world.graph,
+        node_id=warehouse_locations[0],
+        contact_list=all_contacts
+    )
+
     store_1= Store(
         jid=STORE_JID,
         password=STORE_PASSWORD,
         map=world.graph,
         node_id=store_locations[0],
         contact_list=[WAREHOUSE_JID],
+        verbose=False
+    )
+    store_2= Store(
+        jid=STORE_JID_2,
+        password=STORE_PASSWORD_2,
+        map=world.graph,
+        node_id=store_locations[0],
+        contact_list=[WAREHOUSE1_JID],
         verbose=False
     )
     

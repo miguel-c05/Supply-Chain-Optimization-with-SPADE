@@ -364,6 +364,10 @@ class Supplier(Agent):
                     can_fit = data["can_fit"]
                     time = data["delivery_time"]
                     
+                    # Verificar se a entrada para este order_id existe, se não criar
+                    if int(order_id) not in agent.vehicle_proposals:
+                        agent.vehicle_proposals[int(order_id)] = {}
+                    
                     agent.vehicle_proposals[int(order_id)][sender_jid] = (can_fit, time)
                     print(f"{agent.jid}> Vehicle {sender_jid} proposal: can_fit={can_fit}, time={time}")
   
@@ -394,6 +398,10 @@ class Supplier(Agent):
         async def run(self):
             agent : Supplier = self.agent
             print(f"{agent.jid}> 📤 Collecting vehicle proposals...")
+            
+            # Verificar se a entrada para este order_id existe, se não criar
+            if int(self.request_id) not in agent.vehicle_proposals:
+                agent.vehicle_proposals[int(self.request_id)] = {}
             
             order_proposals =  agent.vehicle_proposals[int(self.request_id)]
             proposals = agent.vehicle_proposals[int(self.request_id)] # vehicle_jid : (can_fit, time)
