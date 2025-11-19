@@ -1671,7 +1671,7 @@ class Store(Agent):
         """
         def __init__(self,
                      period=config.STORE_HIGH_DEMAND_FREQUENCY,
-                     start_at=datetime.now() + timedelta(seconds=config.STORE_HIGH_DEMAND_FREQUENCY)):
+                     start_at=datetime.now() + timedelta(seconds=config.STORE_HIGH_DEMAND_FREQUENCY / 2)):
             super().__init__(period=period, start_at=start_at)
         
         async def run(self):
@@ -2411,6 +2411,10 @@ class Store(Agent):
         # BuyProduct behaviour initialization
         buy_behav = self.BuyProduct()
         self.add_behaviour(buy_behav)
+        
+        # HighDemand behaviour initialization
+        highd_behav = self.HighDemand()
+        self.add_behaviour(highd_behav)
 
         # Time delta behaviour
         time_behav = self.ReceiveTimeDelta()
